@@ -28,5 +28,13 @@ int dmc_read(void*, cpu_addr_t addr);
 void power();
 void run_frame();
 
+// Exposed for debugging
+extern u8 ram[0x800];
+extern u8 A, X, Y, S;
+extern u16 PC;
+extern Flags P;
+u8 rd(u16 addr);
+void snapshot_memory(u8* dest);  // Bulk copy entire memory space
+
 
 }

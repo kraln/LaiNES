@@ -68,6 +68,30 @@ template<bool wr> inline u8 access(u16 addr, u8 v = 0)
 }
 inline u8  wr(u16 a, u8 v)      { T; return access<1>(a, v);   }
 inline u8  rd(u16 a)            { T; return access<0>(a);      }
+
+// Efficient bulk memory snapshot for debugging
+void snapshot_memory(u8* dest) {
+    // Copy RAM directly
+    for (int i = 0; i < 0x800; i++) {
+        dest[i] = ram[i];
+    }
+    // Mirror RAM (0x800-0x1FFF)
+    for (int i = 0x800; i < 0x2000; i++) {
+        dest[i] = ram[i & 0x7FF];
+    }
+    // PPU registers (0x2000-0x3FFF) - just return last bus value
+    for (int i = 0x2000; i < 0x4000; i++) {
+        dest[i] = data_bus;
+    }
+    // APU/IO registers (0x4000-0x401F) - return 0 to avoid side effects
+    for (int i = 0x4000; i < 0x4020; i++) {
+        dest[i] = 0;
+    }
+    // Cartridge space (0x4020-0xFFFF) - read without side effects
+    for (int i = 0x4020; i < 0x10000; i++) {
+        dest[i] = Cartridge::access<0>(i, 0);
+    }
+}
 inline u16 rd16_d(u16 a, u16 b) { return rd(a) | (rd(b) << 8); }  // Read from A and B and merge.
 inline u16 rd16(u16 a)          { return rd16_d(a, a+1);       }
 inline u8  push(u8 v)           { return wr(0x100 + (S--), v); }
@@ -84,7 +108,7 @@ inline u16 aby()   { u16 a = abs(); if (cross(a, Y)) { rd((a & 0xFF00) | ((a + Y
 inline u16 zp()    { return rd(imm());                                  }
 inline u16 zpx()   { T; return (zp() + X) % 0x100;                      }
 inline u16 zpy()   { T; return (zp() + Y) % 0x100;                      }
-inline u16 izx()   { u8 i = zpx(); return rd16_d(i, (i+1) % 0x100);     }
+inline u16 izx()   { u8 zp_addr = zp(); u8 i = (zp_addr + X) % 0x100; return rd16_d(i, (i+1) % 0x100);     }
 inline u16 _izy()  { u8 i = zp();  return rd16_d(i, (i+1) % 0x100) + Y; }  // Exception.
 inline u16 izy()   { u16 a = _izy(); if (cross(a-Y, Y)) { rd(((a - Y) & 0xFF00) | (a & 0xFF)); } return a;    }
 

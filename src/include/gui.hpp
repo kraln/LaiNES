@@ -15,6 +15,7 @@ const unsigned FONT_SZ = 15;
 
 void init();
 void toggle_pause();
+void set_paused(bool paused);
 SDL_Scancode query_key();
 int query_button();
 void run();

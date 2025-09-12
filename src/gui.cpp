@@ -8,6 +8,7 @@
 #include "menu.hpp"
 #include "gui.hpp"
 #include "config.hpp"
+#include "shm_debug.hpp"
 
 namespace GUI {
 
@@ -167,6 +168,8 @@ u8 get_joypad_state(int n)
     const int DEAD_ZONE = 8000;
 
     u8 j = 0;
+    
+    // Get normal controller input first
     if (useJoystick[n])
     {
         j |= (SDL_JoystickGetButton(joystick[n], BTN_A[n]))      << 0;  // A.
@@ -194,6 +197,18 @@ u8 get_joypad_state(int n)
         j |= (keys[KEY_LEFT[n]])   << 6;
         j |= (keys[KEY_RIGHT[n]])  << 7;
     }
+    
+    // OR with shared memory controller input if available
+    if (ShmDebug::shm_enabled && ShmDebug::shm_ptr) {
+        // OR with shared memory input (0xFF means "no override")
+        if (n == 0 && ShmDebug::shm_ptr->controller1_input != 0xFF) {
+            j |= ShmDebug::shm_ptr->controller1_input;
+        }
+        if (n == 1 && ShmDebug::shm_ptr->controller2_input != 0xFF) {
+            j |= ShmDebug::shm_ptr->controller2_input;
+        }
+    }
+    
     return j;
 }
 
@@ -231,6 +246,18 @@ void toggle_pause()
     pause = not pause;
     menu  = mainMenu;
 
+    if (pause)
+        SDL_SetTextureColorMod(gameTexture,  60,  60,  60);
+    else
+        SDL_SetTextureColorMod(gameTexture, 255, 255, 255);
+}
+
+/* Set pause state directly */
+void set_paused(bool paused)
+{
+    pause = paused;
+    menu  = paused ? mainMenu : nullptr;
+    
     if (pause)
         SDL_SetTextureColorMod(gameTexture,  60,  60,  60);
     else
@@ -294,7 +321,14 @@ void run()
                         menu->update(keys);
             }
 
-        if (not pause) CPU::run_frame();
+        if (not pause) {
+            CPU::run_frame();
+            // Update shared memory if enabled
+            if (ShmDebug::shm_enabled) {
+                ShmDebug::update_cpu_state();
+                ShmDebug::update_ppu_state();
+            }
+        }
         render();
 
         // Wait to mantain framerate:

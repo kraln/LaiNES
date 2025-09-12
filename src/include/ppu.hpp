@@ -89,5 +89,10 @@ void set_mirroring(Mirroring mode);
 void step();
 void reset();
 
+// Exposed for debugging
+extern u8 ciRam[0x800];  // Nametable RAM
+extern u8 cgRam[0x20];   // Palette RAM  
+extern u8 oamMem[0x100]; // OAM memory
+
 
 }
