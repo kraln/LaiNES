@@ -17,6 +17,7 @@ u32 pixels[256 * 240];     // Video buffer.
 Addr vAddr, tAddr;  // Loopy V, T.
 u8 fX;              // Fine X.
 u8 oamAddr;         // OAM address.
+u8 readBuffer;      // VRAM read buffer for $2007.
 
 Ctrl ctrl;      // PPUCTRL   ($2000) register.
 Mask mask;      // PPUMASK   ($2001) register.
@@ -76,7 +77,6 @@ void wr(u16 addr, u8 v)
 template <bool write> u8 access(u16 index, u8 v)
 {
     static u8 res;      // Result of the operation.
-    static u8 buffer;   // VRAM read buffer.
     static bool latch;  // Detect second reading.
 
     /* Write into register */
@@ -111,11 +111,11 @@ template <bool write> u8 access(u16 index, u8 v)
             case 7:                                 // PPUDATA ($2007).
                 if (vAddr.addr <= 0x3EFF)
                 {
-                    res = buffer;
-                    buffer = rd(vAddr.addr);
+                    res = readBuffer;
+                    readBuffer = rd(vAddr.addr);
                 }
                 else
-                    res = buffer = rd(vAddr.addr);
+                    res = readBuffer = rd(vAddr.addr);
                 vAddr.addr += ctrl.incr ? 32 : 1;
         }
     return res;
@@ -178,13 +178,16 @@ void eval_sprites()
         // If the sprite is in the scanline, copy its properties into secondary OAM:
         if (line >= 0 and line < spr_height())
         {
-            secOam[n].id   = i;
-            secOam[n].y    = oamMem[i*4 + 0];
-            secOam[n].tile = oamMem[i*4 + 1];
-            secOam[n].attr = oamMem[i*4 + 2];
-            secOam[n].x    = oamMem[i*4 + 3];
-
-            if (++n >= 8)
+            if (n < 8)
+            {
+                secOam[n].id   = i;
+                secOam[n].y    = oamMem[i*4 + 0];
+                secOam[n].tile = oamMem[i*4 + 1];
+                secOam[n].attr = oamMem[i*4 + 2];
+                secOam[n].x    = oamMem[i*4 + 3];
+                n++;
+            }
+            else
             {
                 status.sprOvf = true;
                 break;
@@ -343,6 +346,7 @@ void reset()
     frameOdd = false;
     scanline = dot = 0;
     ctrl.r = mask.r = status.r = 0;
+    readBuffer = 0;
 
     memset(pixels, 0x00, sizeof(pixels));
     memset(ciRam,  0xFF, sizeof(ciRam));

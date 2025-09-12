@@ -16,6 +16,7 @@ u8 A, X, Y, S;
 u16 PC;
 Flags P;
 bool nmi, irq;
+u8 data_bus = 0;  // Open bus behavior
 
 // Remaining clocks to end frame:
 const int TOTAL_CYCLES = 29781;
@@ -30,30 +31,34 @@ inline void tick() { PPU::step(); PPU::step(); PPU::step(); remainingCycles--; }
 inline void upd_cv(u8 x, u8 y, s16 r) { P[C] = (r>0xFF); P[V] = ~(x^y) & (x^r) & 0x80; }
 inline void upd_nz(u8 x)              { P[N] = x & 0x80; P[Z] = (x == 0);              }
 // Does adding I to A cross a page?
-inline bool cross(u16 a, u8 i) { return ((a+i) & 0xFF00) != ((a & 0xFF00)); }
+inline bool cross(u16 a, s8 i) { return ((a+i) & 0xFF00) != ((a & 0xFF00)); }
 
 /* Memory access */
 void dma_oam(u8 bank);
 template<bool wr> inline u8 access(u16 addr, u8 v = 0)
 {
     u8* r;
+    u8 result = data_bus;  // Default to open bus
     switch (addr)
     {
-        case 0x0000 ... 0x1FFF:  r = &ram[addr % 0x800]; if (wr) *r = v; return *r;  // RAM.
-        case 0x2000 ... 0x3FFF:  return PPU::access<wr>(addr % 8, v);                // PPU.
+        case 0x0000 ... 0x1FFF:  r = &ram[addr % 0x800]; if (wr) *r = v; result = *r; break;  // RAM.
+        case 0x2000 ... 0x3FFF:  result = PPU::access<wr>(addr % 8, v); break;                // PPU.
 
         // APU:
         case 0x4000 ... 0x4013:
-        case            0x4015:          return APU::access<wr>(elapsed(), addr, v);
-        case            0x4017:  if (wr) return APU::access<wr>(elapsed(), addr, v);
-                                 else return Joypad::read_state(1);                  // Joypad 1.
+        case            0x4015:          result = APU::access<wr>(elapsed(), addr, v); break;
+        case            0x4017:  if (wr) result = APU::access<wr>(elapsed(), addr, v);
+                                 else result = Joypad::read_state(1);                  // Joypad 1.
+                                 break;
 
         case            0x4014:  if (wr) dma_oam(v); break;                          // OAM DMA.
         case            0x4016:  if (wr) { Joypad::write_strobe(v & 1); break; }     // Joypad strobe.
-                                 else return Joypad::read_state(0);                  // Joypad 0.
-        case 0x4018 ... 0xFFFF:  return Cartridge::access<wr>(addr, v);              // Cartridge.
+                                 else result = Joypad::read_state(0);                  // Joypad 0.
+                                 break;
+        case 0x4018 ... 0xFFFF:  result = Cartridge::access<wr>(addr, v); break;              // Cartridge.
     }
-    return 0;
+    if (!wr) data_bus = result;  // Update data bus on reads
+    return result;
 }
 inline u8  wr(u16 a, u8 v)      { T; return access<1>(a, v);   }
 inline u8  rd(u16 a)            { T; return access<0>(a);      }
@@ -68,14 +73,14 @@ inline u16 imm()   { return PC++;                                       }
 inline u16 imm16() { PC += 2; return PC - 2;                            }
 inline u16 abs()   { return rd16(imm16());                              }
 inline u16 _abx()  { T; return abs() + X;                               }  // Exception.
-inline u16 abx()   { u16 a = abs(); if (cross(a, X)) T; return a + X;   }
-inline u16 aby()   { u16 a = abs(); if (cross(a, Y)) T; return a + Y;   }
+inline u16 abx()   { u16 a = abs(); if (cross(a, X)) { rd((a & 0xFF00) | ((a + X) & 0xFF)); } return a + X;   }
+inline u16 aby()   { u16 a = abs(); if (cross(a, Y)) { rd((a & 0xFF00) | ((a + Y) & 0xFF)); } return a + Y;   }
 inline u16 zp()    { return rd(imm());                                  }
 inline u16 zpx()   { T; return (zp() + X) % 0x100;                      }
 inline u16 zpy()   { T; return (zp() + Y) % 0x100;                      }
 inline u16 izx()   { u8 i = zpx(); return rd16_d(i, (i+1) % 0x100);     }
 inline u16 _izy()  { u8 i = zp();  return rd16_d(i, (i+1) % 0x100) + Y; }  // Exception.
-inline u16 izy()   { u16 a = _izy(); if (cross(a-Y, Y)) T; return a;    }
+inline u16 izy()   { u16 a = _izy(); if (cross(a-Y, Y)) { rd((a & 0xFF00) | ((a - Y + Y) & 0xFF)); } return a;    }
 
 /* STx */
 template<u8& r, Mode m> void st()        {    wr(   m()    , r); }
@@ -94,12 +99,12 @@ template<Mode m> void AND() { G; upd_nz(A &= p); }
 template<Mode m> void EOR() { G; upd_nz(A ^= p); }
 template<Mode m> void ORA() { G; upd_nz(A |= p); }
 /* Read-Modify-Write */
-template<Mode m> void ASL() { G; P[C] = p & 0x80; T; upd_nz(wr(a, p << 1)); }
-template<Mode m> void LSR() { G; P[C] = p & 0x01; T; upd_nz(wr(a, p >> 1)); }
-template<Mode m> void ROL() { G; u8 c = P[C]     ; P[C] = p & 0x80; T; upd_nz(wr(a, (p << 1) | c) ); }
-template<Mode m> void ROR() { G; u8 c = P[C] << 7; P[C] = p & 0x01; T; upd_nz(wr(a, c | (p >> 1)) ); }
-template<Mode m> void DEC() { G; T; upd_nz(wr(a, --p)); }
-template<Mode m> void INC() { G; T; upd_nz(wr(a, ++p)); }
+template<Mode m> void ASL() { G; P[C] = p & 0x80; wr(a, p); upd_nz(wr(a, p << 1)); }
+template<Mode m> void LSR() { G; P[C] = p & 0x01; wr(a, p); upd_nz(wr(a, p >> 1)); }
+template<Mode m> void ROL() { G; u8 c = P[C]     ; P[C] = p & 0x80; wr(a, p); upd_nz(wr(a, (p << 1) | c) ); }
+template<Mode m> void ROR() { G; u8 c = P[C] << 7; P[C] = p & 0x01; wr(a, p); upd_nz(wr(a, c | (p >> 1)) ); }
+template<Mode m> void DEC() { G; wr(a, p); upd_nz(wr(a, --p)); }
+template<Mode m> void INC() { G; wr(a, p); upd_nz(wr(a, ++p)); }
 #undef G
 
 /* DEx, INx */
@@ -126,7 +131,7 @@ template<Flag f, bool v> void br()
 { 
     s8 j = rd(imm()); 
     if (P[f] == v) { 
-        if (cross(PC, j)) T; 
+        if (cross(PC, j)) { rd((PC & 0xFF00) | ((PC + j) & 0xFF)); } 
         T; PC += j; 
     } 
 }
@@ -142,6 +147,7 @@ template<Flag f, bool v> void flag() { P[f] = v; T; }  // Clear and set flags.
 template<IntType t> void INT()
 {
     T; if (t != BRK) T;  // BRK already performed the fetch.
+    if (t == BRK) PC++;  // BRK increments PC before pushing
     if (t != RESET)  // Writes on stack are inhibited on RESET.
     {
         push(PC >> 8); push(PC & 0xFF);
@@ -151,8 +157,15 @@ template<IntType t> void INT()
     P[I] = true;
                           /*   NMI    Reset    IRQ     BRK  */
     constexpr u16 vect[] = { 0xFFFA, 0xFFFC, 0xFFFE, 0xFFFE };
-    PC = rd16(vect[t]);
-    if (t == NMI) nmi = false;
+    
+    // Check for NMI hijacking during BRK
+    if (t == BRK && nmi) {
+        PC = rd16(0xFFFA);  // Use NMI vector
+        nmi = false;        // Clear NMI flag
+    } else {
+        PC = rd16(vect[t]);
+        if (t == NMI) nmi = false;
+    }
 }
 void NOP() { T; }
 
