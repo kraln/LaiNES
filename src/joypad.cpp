@@ -3,18 +3,18 @@
 namespace Joypad {
 
 
-u8 joypad_bits[2];  // Joypad shift registers.
-bool strobe;        // Joypad strobe latch.
+u8 joypad_bits[2] = {0, 0};  // Joypad shift registers (initialized to 0).
+bool strobe = false;         // Joypad strobe latch (initialized to false).
 
 /* Read joypad state (NES register format) */
 u8 read_state(int n)
 {
     // When strobe is high, it keeps reading A:
     if (strobe)
-        return 0x40 | (GUI::get_joypad_state(n) & 1);
+        return (GUI::get_joypad_state(n) & 1);
 
     // Get the status of a button and shift the register:
-    u8 j = 0x40 | (joypad_bits[n] & 1);
+    u8 j = (joypad_bits[n] & 1);
     joypad_bits[n] = 0x80 | (joypad_bits[n] >> 1);
     return j;
 }

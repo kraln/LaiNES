@@ -2,6 +2,7 @@
 #include "cpu.hpp"
 #include "gui.hpp"
 #include "ppu.hpp"
+#include <cstdio>
 
 namespace PPU {
 #include "palette.inc"
@@ -18,6 +19,7 @@ Addr vAddr, tAddr;  // Loopy V, T.
 u8 fX;              // Fine X.
 u8 oamAddr;         // OAM address.
 u8 readBuffer;      // VRAM read buffer for $2007.
+u8 openBus;         // PPU I/O bus value for open bus behavior.
 
 Ctrl ctrl;      // PPUCTRL   ($2000) register.
 Mask mask;      // PPUMASK   ($2001) register.
@@ -58,7 +60,7 @@ u8 rd(u16 addr)
         case 0x3F00 ... 0x3FFF:  // Palettes:
             if ((addr & 0x13) == 0x10) addr &= ~0x10;
             return cgRam[addr & 0x1F] & (mask.gray ? 0x30 : 0xFF);
-        default: return 0;
+        default: return addr & 0xFF;  // Open bus on video memory bus returns low byte of address
     }
 }
 void wr(u16 addr, u8 v)
@@ -73,21 +75,24 @@ void wr(u16 addr, u8 v)
     }
 }
 
+static bool latch;  // Detect second reading (moved out for reset access)
+
 /* Access PPU through registers. */
 template <bool write> u8 access(u16 index, u8 v)
 {
-    static u8 res;      // Result of the operation.
-    static bool latch;  // Detect second reading.
+    // v parameter contains the current data bus value
+    
 
     /* Write into register */
     if (write)
     {
-        res = v;
-
+        openBus = v;  // All writes update PPU open bus
         switch (index)
         {
             case 0:  ctrl.r = v; tAddr.nt = ctrl.nt; break;       // PPUCTRL   ($2000).
             case 1:  mask.r = v; break;                           // PPUMASK   ($2001).
+            case 2:  // PPUSTATUS is read-only, write does nothing but update open bus
+                break;
             case 3:  oamAddr = v; break;                          // OAMADDR   ($2003).
             case 4:  oamMem[oamAddr++] = v; break;                // OAMDATA   ($2004).
             case 5:                                               // PPUSCROLL ($2005).
@@ -95,30 +100,67 @@ template <bool write> u8 access(u16 index, u8 v)
                 else  { tAddr.fY = v & 7; tAddr.cY = v >> 3; }      // Second write.
                 latch = !latch; break;
             case 6:                                               // PPUADDR   ($2006).
-                if (!latch) { tAddr.h = v & 0x3F; }                 // First write.
-                else        { tAddr.l = v; vAddr.r = tAddr.r; }     // Second write.
+                if (!latch) {
+                    // First write: set high 6 bits (bits 8-13 of address)
+                    tAddr.addr = (tAddr.addr & 0x00FF) | ((v & 0x3F) << 8);
+                }                 // First write.
+                else {
+                    // Second write: set low 8 bits (bits 0-7 of address)
+                    tAddr.addr = (tAddr.addr & 0x3F00) | v;
+                    vAddr.r = tAddr.r;
+                }     // Second write.
                 latch = !latch; break;
             case 7:  wr(vAddr.addr, v); vAddr.addr += ctrl.incr ? 32 : 1;  // PPUDATA ($2007).
         }
+        return v;  // Writes return the value written
     }
     /* Read from register */
     else
         switch (index)
         {
+            case 0:  // PPUCTRL is write-only, return PPU open bus
+                v = openBus;
+                break;
+            case 1:  // PPUMASK is write-only, return PPU open bus
+                v = openBus;
+                break;
             // PPUSTATUS ($2002):
-            case 2:  res = (res & 0x1F) | status.r; status.vBlank = 0; latch = 0; break;
-            case 4:  res = oamMem[oamAddr]; break;  // OAMDATA ($2004).
-            case 7:                                 // PPUDATA ($2007).
+            case 2:
+                v = (openBus & 0x1F) | status.r;  // Bits 4-0 from open bus, 7-5 from status
+                openBus = v;  // Reading $2002 updates open bus
+                status.vBlank = 0; latch = 0;
+                break;
+            case 3:  // OAMADDR is write-only, return PPU open bus
+                v = openBus;
+                break;
+            case 4:
+                v = oamMem[oamAddr];
+                openBus = v;  // Reading $2004 updates open bus
+                break;  // OAMDATA ($2004).
+            case 5:  // PPUSCROLL is write-only, return PPU open bus
+                v = openBus;
+                break;
+            case 6:  // PPUADDR is write-only, return PPU open bus
+                v = openBus;
+                break;
+            case 7:                                     // PPUDATA ($2007).
                 if (vAddr.addr <= 0x3EFF)
                 {
-                    res = readBuffer;
+                    v = readBuffer;
                     readBuffer = rd(vAddr.addr);
                 }
                 else
-                    res = readBuffer = rd(vAddr.addr);
-                vAddr.addr += ctrl.incr ? 32 : 1;
+                    v = readBuffer = rd(vAddr.addr);
+                openBus = v;  // Reading $2007 updates open bus
+                vAddr.addr += ctrl.incr ? 32 : 1; break;
+            // Invalid registers return open bus
+            default:
+                v = openBus;
+                break;
         }
-    return res;
+
+
+    return v;
 }
 template u8 access<0>(u16, u8); template u8 access<1>(u16, u8);
 
@@ -354,6 +396,7 @@ void reset()
     frameOdd = false;
     scanline = dot = 0;
     ctrl.r = mask.r = status.r = 0;
+    latch = 0;  // Reset the write latch
     readBuffer = 0;
 
     memset(pixels, 0x00, sizeof(pixels));

@@ -1,11 +1,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <cstdio>
 #include "apu.hpp"
 #include "cartridge.hpp"
 #include "joypad.hpp"
 #include "ppu.hpp"
 #include "cpu.hpp"
+#include "shm_debug.hpp"
 
 namespace CPU {
 
@@ -48,26 +50,37 @@ template<bool wr> inline u8 access(u16 addr, u8 v = 0)
     switch (addr)
     {
         case 0x0000 ... 0x1FFF:  r = &ram[addr % 0x800]; if (wr) *r = v; result = *r; break;  // RAM.
-        case 0x2000 ... 0x3FFF:  result = PPU::access<wr>(addr % 8, v); break;                // PPU.
+        case 0x2000 ... 0x3FFF:  result = PPU::access<wr>(addr & 7, wr ? v : data_bus); break;  // PPU.
 
         // APU:
         case 0x4000 ... 0x4013:
-        case            0x4015:          result = APU::access<wr>(elapsed(), addr, v); break;
+        case            0x4015:          result = APU::access<wr>(elapsed(), addr, wr ? v : data_bus); break;
         case            0x4017:  if (wr) result = APU::access<wr>(elapsed(), addr, v);
-                                 else result = Joypad::read_state(1);                  // Joypad 1.
+                                 else result = (data_bus & 0xE0) | (Joypad::read_state(1) & 0x1F);  // Joypad 1, bits 5-7 open bus.
                                  break;
 
         case            0x4014:  if (wr) dma_oam(v); break;                          // OAM DMA.
         case            0x4016:  if (wr) { Joypad::write_strobe(v & 1); break; }     // Joypad strobe.
-                                 else result = Joypad::read_state(0);                  // Joypad 0.
+                                 else result = (data_bus & 0xE0) | (Joypad::read_state(0) & 0x1F);  // Joypad 0, bits 5-7 open bus.
                                  break;
-        case 0x4018 ... 0xFFFF:  result = Cartridge::access<wr>(addr, v); break;              // Cartridge.
+        case 0x4018 ... 0x5FFF:  if (wr) result = v; else result = data_bus; break;  // Open bus - return current data_bus value
+        case 0x6000 ... 0xFFFF:  result = Cartridge::access<wr>(addr, v); break;              // Cartridge.
     }
-    if (!wr) data_bus = result;  // Update data bus on reads
+    // Update data bus - writes always update it, reads update it except for $4015
+    if (wr) {
+        data_bus = v;
+    } else if (addr != 0x4015) {
+        // Update data bus for all reads except $4015 (APU status)
+        u8 old_bus = data_bus;
+        data_bus = result;
+    }
+    // Note: Reading from $4015 does NOT update the data bus
     return result;
 }
 inline u8  wr(u16 a, u8 v)      { T; return access<1>(a, v);   }
 inline u8  rd(u16 a)            { T; return access<0>(a);      }
+// Dummy read - doesn't update data bus
+inline u8  rd_dummy(u16 a)      { T; u8 old_bus = data_bus; u8 result = access<0>(a); data_bus = old_bus; return result; }
 
 // Efficient bulk memory snapshot for debugging
 void snapshot_memory(u8* dest) {
@@ -102,9 +115,24 @@ void dma_oam(u8 bank) { for (int i = 0; i < 256; i++)  wr(0x2014, rd(bank*0x100 
 inline u16 imm()   { return PC++;                                       }
 inline u16 imm16() { PC += 2; return PC - 2;                            }
 inline u16 abs()   { return rd16(imm16());                              }
-inline u16 _abx()  { T; return abs() + X;                               }  // Exception.
-inline u16 abx()   { u16 a = abs(); if (cross(a, X)) { rd((a & 0xFF00) | ((a + X) & 0xFF)); } return a + X;   }
-inline u16 aby()   { u16 a = abs(); if (cross(a, Y)) { rd((a & 0xFF00) | ((a + Y) & 0xFF)); } return a + Y;   }
+inline u16 _abx()  { u16 a = abs(); rd((a & 0xFF00) | ((a + X) & 0xFF)); return a + X; }  // Exception - always dummy read.
+inline u16 _aby()  { u16 a = abs(); rd((a & 0xFF00) | ((a + Y) & 0xFF)); return a + Y; }  // Exception - always dummy read.
+inline u16 abx()   {
+    u16 a = abs();
+    if (cross(a, X)) {
+        u16 dummy_addr = (a & 0xFF00) | ((a + X) & 0xFF);
+        rd(dummy_addr);
+    }
+    return a + X;
+}
+inline u16 aby()   {
+    u16 a = abs();
+    if (cross(a, Y)) {
+        u16 dummy_addr = (a & 0xFF00) | ((a + Y) & 0xFF);
+        rd(dummy_addr);
+    }
+    return a + Y;
+}
 inline u16 zp()    { return rd(imm());                                  }
 inline u16 zpx()   { T; return (zp() + X) % 0x100;                      }
 inline u16 zpy()   { T; return (zp() + Y) % 0x100;                      }
@@ -114,9 +142,9 @@ inline u16 izy()   { u16 a = _izy(); if (cross(a-Y, Y)) { rd(((a - Y) & 0xFF00) 
 
 /* STx */
 template<u8& r, Mode m> void st()        {    wr(   m()    , r); }
-template<>              void st<A,izy>() { u16 a = _izy(); if (cross(a-Y, Y)) rd(((a - Y) & 0xFF00) | (a & 0xFF)); wr(a, A); }  // Exceptions.
-template<>              void st<A,abx>() { u16 a = abs(); rd((a & 0xFF00) | ((a + X) & 0xFF)); wr(a + X, A); }  // Always dummy read
-template<>              void st<A,aby>() { u16 a = abs(); rd((a & 0xFF00) | ((a + Y) & 0xFF)); wr(a + Y, A); }  // Always dummy read
+template<>              void st<A,izy>() { u16 a = _izy(); if (cross(a-Y, Y)) rd_dummy(((a - Y) & 0xFF00) | (a & 0xFF)); wr(a, A); }  // Exceptions.
+template<>              void st<A,abx>() { u16 a = abs(); rd_dummy((a & 0xFF00) | ((a + X) & 0xFF)); wr(a + X, A); }  // Always dummy read
+template<>              void st<A,aby>() { u16 a = abs(); rd_dummy((a & 0xFF00) | ((a + Y) & 0xFF)); wr(a + Y, A); }  // Always dummy read
 
 #define G  u16 a = m(); u8 p = rd(a)  /* Fetch parameter */
 template<u8& r, Mode m> void ld()  { G; upd_nz(r = p);                  }  // LDx
@@ -138,17 +166,17 @@ template<Mode m> void INC() { G; wr(a, p); upd_nz(wr(a, ++p)); }
 #undef G
 
 /* DEx, INx */
-template<u8& r> void dec() { upd_nz(--r); T; }
-template<u8& r> void inc() { upd_nz(++r); T; }
+template<u8& r> void dec() { rd(PC+1); upd_nz(--r); }  // Dummy read from PC+1
+template<u8& r> void inc() { rd(PC+1); upd_nz(++r); }  // Dummy read from PC+1
 /* Bit shifting on the accumulator */
-void ASL_A() { P[C] = A & 0x80; upd_nz(A <<= 1); T; }
-void LSR_A() { P[C] = A & 0x01; upd_nz(A >>= 1); T; }
-void ROL_A() { u8 c = P[C]     ; P[C] = A & 0x80; upd_nz(A = ((A << 1) | c) ); T; }
-void ROR_A() { u8 c = P[C] << 7; P[C] = A & 0x01; upd_nz(A = (c | (A >> 1)) ); T; }
+void ASL_A() { P[C] = A & 0x80; upd_nz(A <<= 1); rd(PC+1); }  // Dummy read from PC+1
+void LSR_A() { P[C] = A & 0x01; upd_nz(A >>= 1); rd(PC+1); }  // Dummy read from PC+1
+void ROL_A() { u8 c = P[C]     ; P[C] = A & 0x80; upd_nz(A = ((A << 1) | c) ); rd(PC+1); }  // Dummy read from PC+1
+void ROR_A() { u8 c = P[C] << 7; P[C] = A & 0x01; upd_nz(A = (c | (A >> 1)) ); rd(PC+1); }  // Dummy read from PC+1
 
 /* Txx (move values between registers) */
-template<u8& s, u8& d> void tr()      { upd_nz(d = s); T; }
-template<>             void tr<X,S>() { S = X;         T; }  // TSX, exception.
+template<u8& s, u8& d> void tr()      { rd(PC+1); upd_nz(d = s); }  // Dummy read from PC+1
+template<>             void tr<X,S>() { rd(PC+1); S = X;         }  // TSX, exception.
 
 /* Unofficial opcodes */
 #define G  u16 a = m(); u8 p = rd(a)  /* Fetch parameter */
@@ -209,9 +237,9 @@ void SHA_izy() {
     u8 zp = rd(imm());
     u16 base = rd16_d(zp, (zp + 1) % 0x100);
     u16 addr = base + Y;
-    u8 h = (base >> 8) + 1;
+    u8 h = (base >> 8) + 1;  // High byte of BASE address + 1
     
-    // Page crossing behavior for indirect,Y
+    // Always do the dummy read for page crossing
     if (cross(base, Y)) {
         // Dummy read
         rd((base & 0xFF00) | (addr & 0xFF));
@@ -226,11 +254,11 @@ void SHA_izy() {
 void SHA_aby() { 
     u16 base = abs();
     u16 addr = base + Y;
-    u8 h = (base >> 8) + 1;
+    u8 h = (base >> 8) + 1;  // High byte of BASE address + 1
     
     // Page crossing behavior for absolute,Y
     if (cross(base, Y)) {
-        // Dummy read
+        // Dummy read when page crossing
         rd((base & 0xFF00) | (addr & 0xFF));
         // Behavior 2: high byte of result ANDs with X only
         u8 addr_high = (addr >> 8) & X;
@@ -244,34 +272,38 @@ void SHA_aby() {
 void SHY() { 
     u16 base = abs();
     u16 addr = base + X;
-    u8 h = (base >> 8) + 1;
+    u8 h_plus_1 = ((base >> 8) + 1) & 0xFF;  // High byte of BASE address + 1
     
     if (cross(base, X)) {
-        // Dummy read
+        // Dummy read when page crossing
         rd((base & 0xFF00) | (addr & 0xFF));
-        // Page crossed: corrupt high byte of result by ANDing with Y
+        // Page crossed: high byte of address is incremented (already done in addr calculation)
+        // then ANDed with Y
         u8 addr_high = (addr >> 8) & Y;
         addr = (addr & 0xFF) | (addr_high << 8);
     }
     
-    wr(addr, Y & h);
+    // Always store Y & (H+1)
+    wr(addr, Y & h_plus_1);
 }
 
 // SHX: Store X & (high byte + 1)  
 void SHX() { 
     u16 base = abs();
     u16 addr = base + Y; 
-    u8 h = (base >> 8) + 1;
+    u8 h_plus_1 = ((base >> 8) + 1) & 0xFF;  // High byte of BASE address + 1
     
     if (cross(base, Y)) {
-        // Dummy read
+        // Dummy read when page crossing
         rd((base & 0xFF00) | (addr & 0xFF));
-        // Page crossed: corrupt high byte of result by ANDing with X
+        // Page crossed: high byte of address is incremented (already done in addr calculation)
+        // then ANDed with X
         u8 addr_high = (addr >> 8) & X;
         addr = (addr & 0xFF) | (addr_high << 8);
     }
     
-    wr(addr, X & h);
+    // Always store X & (H+1)
+    wr(addr, X & h_plus_1);
 }
 
 // TAS/SHS: Transfer A & X to S, store A & X & (high byte + 1)
@@ -279,28 +311,29 @@ void TAS() {
     S = A & X; 
     u16 base = abs();
     u16 addr = base + Y;
-    u8 h = (base >> 8) + 1;
+    u8 h_plus_1 = ((base >> 8) + 1) & 0xFF;  // High byte of BASE address + 1
     
     if (cross(base, Y)) {
-        // Dummy read
+        // Dummy read when page crossing
         rd((base & 0xFF00) | (addr & 0xFF));
-        // Page crossed: corrupt high byte of result
-        // For SHS with behavior 2, AND with A & X (which is now S)
-        u8 addr_high = (addr >> 8) & S;
+        // Page crossed: high byte of address is incremented (already done in addr calculation)
+        // then ANDed with (A & X)
+        u8 addr_high = (addr >> 8) & S;  // S = A & X
         addr = (addr & 0xFF) | (addr_high << 8);
     }
     
-    wr(addr, S & h);
+    // Always store (A & X) & (H+1)
+    wr(addr, S & h_plus_1);
 }
 
 // LAS: Load A, X, S with memory & S
 void LAS() { u16 a = aby(); u8 p = rd(a); S &= p; upd_nz(A = X = S); }
 
 /* Stack operations */
-void PLP() { T; T; P.set(pop()); }
-void PHP() { T; push(P.get() | (1 << 4)); }  // B flag set.
-void PLA() { T; T; A = pop(); upd_nz(A);  }
-void PHA() { T; push(A); }
+void PLP() { rd(PC+1); T; P.set(pop()); }  // Dummy read from PC+1, then stack operation
+void PHP() { rd(PC+1); push(P.get() | (1 << 4)); }  // Dummy read from PC+1, B flag set
+void PLA() { rd(PC+1); T; A = pop(); upd_nz(A);  }  // Dummy read from PC+1, then stack operation
+void PHA() { rd(PC+1); push(A); }  // Dummy read from PC+1
 
 /* Flow control (branches, jumps) */
 template<Flag f, bool v> void br()
@@ -316,13 +349,15 @@ void JMP()     { PC = rd16(imm16()); }
 void JSR()     { u16 t = PC+1; T; push(t >> 8); push(t); PC = rd16(imm16()); }
 
 /* Return instructions */
-void RTS() { T; T;  PC = (pop() | (pop() << 8)) + 1; T; }
+void RTS() { rd(PC+1); T;  PC = (pop() | (pop() << 8)) + 1; T; }  // Dummy read from PC+1
 void RTI() { PLP(); PC =  pop() | (pop() << 8);         }
 
-template<Flag f, bool v> void flag() { P[f] = v; T; }  // Clear and set flags.
+template<Flag f, bool v> void flag() { P[f] = v; rd(PC+1); }  // Clear and set flags, dummy read from PC+1
 template<IntType t> void INT()
 {
-    T; if (t != BRK) T;  // BRK already performed the fetch.
+    if (t == BRK) rd(PC+1);  // BRK performs dummy read from PC+1
+    else T;
+    if (t != BRK) T;  // Non-BRK interrupts have additional cycle
     if (t == BRK) PC++;  // BRK increments PC before pushing
     if (t != RESET)  // Writes on stack are inhibited on RESET.
     {
@@ -343,7 +378,7 @@ template<IntType t> void INT()
         if (t == NMI) nmi = false;
     }
 }
-void NOP() { T; }
+void NOP() { rd(PC+1); }  // Dummy read from PC+1
 
 /* Execute a CPU instruction */
 void exec()
@@ -365,7 +400,7 @@ void exec()
         case 0x16: return ASL<zpx>()  ;  case 0x17: return SLO<zpx>()  ;
         case 0x18: return flag<C,0>() ;
         case 0x19: return ORA<aby>()  ;  case 0x1A: return NOP()       ;
-        case 0x1B: return SLO<aby>()  ;
+        case 0x1B: return SLO<_aby>() ;
         case 0x1C: return NOP_abx()   ;  case 0x1D: return ORA<abx>()  ;
         case 0x1E: return ASL<_abx>() ;  case 0x1F: return SLO<_abx>() ;
         case 0x20: return JSR()       ;
@@ -384,7 +419,7 @@ void exec()
         case 0x37: return RLA<zpx>()  ;
         case 0x38: return flag<C,1>() ;  case 0x39: return AND<aby>()  ;
         case 0x3A: return NOP()       ;
-        case 0x3B: return RLA<aby>()  ;  case 0x3C: return NOP_abx()   ;
+        case 0x3B: return RLA<_aby>() ;  case 0x3C: return NOP_abx()   ;
         case 0x3D: return AND<abx>()  ;  case 0x3E: return ROL<_abx>() ;
         case 0x3F: return RLA<_abx>() ;
         case 0x40: return RTI()       ;  case 0x41: return EOR<izx>()  ;
@@ -402,7 +437,7 @@ void exec()
         case 0x57: return SRE<zpx>()  ;
         case 0x58: return flag<I,0>() ;  case 0x59: return EOR<aby>()  ;
         case 0x5A: return NOP()       ;
-        case 0x5B: return SRE<aby>()  ;  case 0x5C: return NOP_abx()   ;
+        case 0x5B: return SRE<_aby>() ;  case 0x5C: return NOP_abx()   ;
         case 0x5D: return EOR<abx>()  ;  case 0x5E: return LSR<_abx>() ;
         case 0x5F: return SRE<_abx>() ;
         case 0x60: return RTS()       ;  case 0x61: return ADC<izx>()  ;
@@ -420,7 +455,7 @@ void exec()
         case 0x77: return RRA<zpx>()  ;
         case 0x78: return flag<I,1>() ;  case 0x79: return ADC<aby>()  ;
         case 0x7A: return NOP()       ;
-        case 0x7B: return RRA<aby>()  ;  case 0x7C: return NOP_abx()   ;
+        case 0x7B: return RRA<_aby>() ;  case 0x7C: return NOP_abx()   ;
         case 0x7D: return ADC<abx>()  ;  case 0x7E: return ROR<_abx>() ;
         case 0x7F: return RRA<_abx>() ;  case 0x80: return NOP_imm()   ;
         case 0x81: return st<A,izx>() ;  case 0x82: return NOP_imm()   ;
@@ -474,7 +509,7 @@ void exec()
         case 0xD5: return cmp<A,zpx>();  case 0xD6: return DEC<zpx>()  ;
         case 0xD7: return DCP<zpx>()  ;
         case 0xD8: return flag<D,0>() ;  case 0xD9: return cmp<A,aby>();
-        case 0xDA: return NOP()       ;  case 0xDB: return DCP<aby>()  ;
+        case 0xDA: return NOP()       ;  case 0xDB: return DCP<_aby>() ;
         case 0xDC: return NOP_abx()   ;
         case 0xDD: return cmp<A,abx>();  case 0xDE: return DEC<_abx>() ;
         case 0xDF: return DCP<_abx>() ;
@@ -493,7 +528,7 @@ void exec()
         case 0xF6: return INC<zpx>()  ;  case 0xF7: return ISC<zpx>()  ;
         case 0xF8: return flag<D,1>() ;
         case 0xF9: return SBC<aby>()  ;  case 0xFA: return NOP()       ;
-        case 0xFB: return ISC<aby>()  ;  case 0xFC: return NOP_abx()   ;
+        case 0xFB: return ISC<_aby>() ;  case 0xFC: return NOP_abx()   ;
         case 0xFD: return SBC<abx>()  ;
         case 0xFE: return INC<_abx>() ;  case 0xFF: return ISC<_abx>() ;
         default:

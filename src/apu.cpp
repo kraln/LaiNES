@@ -30,8 +30,11 @@ template <bool write> u8 access(int elapsed, u16 addr, u8 v)
 {
     if (write)
         apu.write_register(elapsed, addr, v);
-    else if (addr == apu.status_addr)
-        v = apu.read_status(elapsed);
+    else if (addr == apu.status_addr) {
+        u8 status = apu.read_status(elapsed);
+        // Bit 5 is open bus, preserve it from input value
+        v = (status & 0xDF) | (v & 0x20);
+    }
 
     return v;
 }

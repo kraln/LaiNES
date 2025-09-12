@@ -77,8 +77,9 @@ union Addr
     };
     struct
     {
-        unsigned l : 8;
-        unsigned h : 7;
+        unsigned l : 8;   // Low byte (bits 0-7)
+        unsigned h : 6;   // High byte (bits 8-13)
+        unsigned   : 1;   // Unused (bit 14)
     };
     unsigned addr : 14;
     unsigned r : 15;
