@@ -139,13 +139,13 @@ inline u16 aby()   {
 inline u16 zp()    { return rd(imm());                                  }
 inline u16 zpx()   { T; return (zp() + X) % 0x100;                      }
 inline u16 zpy()   { T; return (zp() + Y) % 0x100;                      }
-inline u16 izx()   { u8 zp_addr = zp(); u8 i = (zp_addr + X) % 0x100; return rd16_d(i, (i+1) % 0x100);     }
+inline u16 izx()   { u8 zp_addr = zp(); rd(zp_addr); u8 i = (zp_addr + X) % 0x100; return rd16_d(i, (i+1) % 0x100);     }
 inline u16 _izy()  { u8 i = zp();  return rd16_d(i, (i+1) % 0x100) + Y; }  // Exception.
 inline u16 izy()   { u16 a = _izy(); if (cross(a-Y, Y)) { rd(((a - Y) & 0xFF00) | (a & 0xFF)); } return a;    }
 
 /* STx */
 template<u8& r, Mode m> void st()        {    wr(   m()    , r); }
-template<>              void st<A,izy>() { u16 a = _izy(); if (cross(a-Y, Y)) rd_dummy(((a - Y) & 0xFF00) | (a & 0xFF)); wr(a, A); }  // Exceptions.
+template<>              void st<A,izy>() { u16 a = _izy(); rd_dummy(((a - Y) & 0xFF00) | (a & 0xFF)); wr(a, A); }  // Always dummy read
 template<>              void st<A,abx>() { u16 a = abs(); rd_dummy((a & 0xFF00) | ((a + X) & 0xFF)); wr(a + X, A); }  // Always dummy read
 template<>              void st<A,aby>() { u16 a = abs(); rd_dummy((a & 0xFF00) | ((a + Y) & 0xFF)); wr(a + Y, A); }  // Always dummy read
 
@@ -186,35 +186,50 @@ template<>             void tr<X,S>() { rd(PC+1); S = X;         }  // TSX, exce
 
 // SLO/ASO: ASL + ORA
 template<Mode m> void SLO() { G; P[C] = p & 0x80; wr(a, p); p <<= 1; wr(a, p); upd_nz(A |= p); }
+template<> void SLO<izx>() { u16 a = izx(); u8 p = rd(a); P[C] = p & 0x80; wr(a, p); p <<= 1; wr(a, p); upd_nz(A |= p); }
+template<> void SLO<izy>() { u8 zp = rd(imm()); u16 base = rd16_d(zp, (zp + 1) % 0x100); u16 a = base + Y; if (!cross(base, Y)) T; else rd(((base) & 0xFF00) | (a & 0xFF)); u8 p = rd(a); P[C] = p & 0x80; wr(a, p); p <<= 1; wr(a, p); upd_nz(A |= p); }
 
-// RLA: ROL + AND  
+// RLA: ROL + AND
 template<Mode m> void RLA() { G; u8 c = P[C]; P[C] = p & 0x80; wr(a, p); p = (p << 1) | c; wr(a, p); upd_nz(A &= p); }
+template<> void RLA<izx>() { u16 a = izx(); u8 p = rd(a); u8 c = P[C]; P[C] = p & 0x80; wr(a, p); p = (p << 1) | c; wr(a, p); upd_nz(A &= p); }
+template<> void RLA<izy>() { u8 zp = rd(imm()); u16 base = rd16_d(zp, (zp + 1) % 0x100); u16 a = base + Y; if (!cross(base, Y)) T; else rd(((base) & 0xFF00) | (a & 0xFF)); u8 p = rd(a); u8 c = P[C]; P[C] = p & 0x80; wr(a, p); p = (p << 1) | c; wr(a, p); upd_nz(A &= p); }
 
 // SRE/LSE: LSR + EOR
 template<Mode m> void SRE() { G; P[C] = p & 0x01; wr(a, p); p >>= 1; wr(a, p); upd_nz(A ^= p); }
+template<> void SRE<izx>() { u16 a = izx(); u8 p = rd(a); P[C] = p & 0x01; wr(a, p); p >>= 1; wr(a, p); upd_nz(A ^= p); }
+template<> void SRE<izy>() { u8 zp = rd(imm()); u16 base = rd16_d(zp, (zp + 1) % 0x100); u16 a = base + Y; if (!cross(base, Y)) T; else rd(((base) & 0xFF00) | (a & 0xFF)); u8 p = rd(a); P[C] = p & 0x01; wr(a, p); p >>= 1; wr(a, p); upd_nz(A ^= p); }
 
 // RRA: ROR + ADC
 template<Mode m> void RRA() { G; u8 c = P[C] << 7; P[C] = p & 0x01; wr(a, p); p = c | (p >> 1); wr(a, p); s16 r = A + p + P[C]; upd_cv(A, p, r); upd_nz(A = r); }
+template<> void RRA<izx>() { u16 a = izx(); u8 p = rd(a); u8 c = P[C] << 7; P[C] = p & 0x01; wr(a, p); p = c | (p >> 1); wr(a, p); s16 r = A + p + P[C]; upd_cv(A, p, r); upd_nz(A = r); }
+template<> void RRA<izy>() { u8 zp = rd(imm()); u16 base = rd16_d(zp, (zp + 1) % 0x100); u16 a = base + Y; if (!cross(base, Y)) T; else rd(((base) & 0xFF00) | (a & 0xFF)); u8 p = rd(a); u8 c = P[C] << 7; P[C] = p & 0x01; wr(a, p); p = c | (p >> 1); wr(a, p); s16 r = A + p + P[C]; upd_cv(A, p, r); upd_nz(A = r); }
 
 // DCP: DEC + CMP
 template<Mode m> void DCP() { G; wr(a, p); --p; wr(a, p); upd_nz(A - p); P[C] = (A >= p); }
+template<> void DCP<izx>() { u16 a = izx(); u8 p = rd(a); wr(a, p); --p; wr(a, p); upd_nz(A - p); P[C] = (A >= p); }
+template<> void DCP<izy>() { u8 zp = rd(imm()); u16 base = rd16_d(zp, (zp + 1) % 0x100); u16 a = base + Y; if (!cross(base, Y)) T; else rd(((base) & 0xFF00) | (a & 0xFF)); u8 p = rd(a); wr(a, p); --p; wr(a, p); upd_nz(A - p); P[C] = (A >= p); }
 
 // ISC/ISB: INC + SBC
 template<Mode m> void ISC() { G; wr(a, p); ++p; wr(a, p); p ^= 0xFF; s16 r = A + p + P[C]; upd_cv(A, p, r); upd_nz(A = r); }
+template<> void ISC<izx>() { u16 a = izx(); u8 p = rd(a); wr(a, p); ++p; wr(a, p); p ^= 0xFF; s16 r = A + p + P[C]; upd_cv(A, p, r); upd_nz(A = r); }
+template<> void ISC<izy>() { u8 zp = rd(imm()); u16 base = rd16_d(zp, (zp + 1) % 0x100); u16 a = base + Y; if (!cross(base, Y)) T; else rd(((base) & 0xFF00) | (a & 0xFF)); u8 p = rd(a); wr(a, p); ++p; wr(a, p); p ^= 0xFF; s16 r = A + p + P[C]; upd_cv(A, p, r); upd_nz(A = r); }
 
 // SAX: Store A & X
 template<Mode m> void SAX() { wr(m(), A & X); }
+template<> void SAX<izx>() { u16 a = izx(); wr(a, A & X); }
 
 // LAX: LDA + LDX
 template<Mode m> void LAX() { G; upd_nz(A = X = p); }
+template<> void LAX<izx>() { u16 a = izx(); u8 p = rd(a); upd_nz(A = X = p); }
+template<> void LAX<izy>() { u16 a = izy(); u8 p = rd(a); upd_nz(A = X = p); }
 
 #undef G
 
 // Special unofficial NOPs with different sizes/timings
-void NOP_imm() { rd(imm()); T; }      // 2-byte NOP
-void NOP_zp()  { rd(zp()); T; }       // 2-byte NOP with zp read
-void NOP_zpx() { rd(zpx()); T; }      // 2-byte NOP with zpx read  
-void NOP_abs() { rd(abs()); T; }      // 3-byte NOP
+void NOP_imm() { rd(imm()); }         // 2-byte NOP (2 cycles)
+void NOP_zp()  { rd(zp()); }          // 2-byte NOP with zp read (3 cycles)
+void NOP_zpx() { rd(zpx()); }         // 2-byte NOP with zpx read (4 cycles)
+void NOP_abs() { rd(abs()); }         // 3-byte NOP (4 cycles)
 void NOP_abx() { rd(abx()); }         // 3-byte NOP (page cross handled in abx)
 
 // ANC: AND with immediate, copy N to C
@@ -236,38 +251,39 @@ void LAX_imm() { u8 p = rd(imm()); upd_nz(A = X = p); }
 void AXS() { u8 p = rd(imm()); u8 temp = A & X; X = temp - p; P[C] = (temp >= p); upd_nz(X); }
 
 // SHA/AHX: Store A & X & (high byte + 1) - Complex behavior (using behavior 2)
-void SHA_izy() { 
+void SHA_izy() {
     u8 zp = rd(imm());
     u16 base = rd16_d(zp, (zp + 1) % 0x100);
     u16 addr = base + Y;
     u8 h = (base >> 8) + 1;  // High byte of BASE address + 1
-    
-    // Always do the dummy read for page crossing
+
+    // Always do dummy read (makes it always 6 cycles)
+    rd((base & 0xFF00) | (addr & 0xFF));
+
     if (cross(base, Y)) {
-        // Dummy read
-        rd((base & 0xFF00) | (addr & 0xFF));
         // Behavior 2: high byte of result ANDs with X only
         u8 addr_high = (addr >> 8) & X;
         addr = (addr & 0xFF) | (addr_high << 8);
     }
-    
+
     wr(addr, A & X & h);
 }
 
-void SHA_aby() { 
+void SHA_aby() {
     u16 base = abs();
     u16 addr = base + Y;
     u8 h = (base >> 8) + 1;  // High byte of BASE address + 1
-    
+
+    // Always perform dummy read (these instructions always take 5 cycles)
+    rd((base & 0xFF00) | ((base + Y) & 0xFF));
+
     // Page crossing behavior for absolute,Y
     if (cross(base, Y)) {
-        // Dummy read when page crossing
-        rd((base & 0xFF00) | (addr & 0xFF));
         // Behavior 2: high byte of result ANDs with X only
         u8 addr_high = (addr >> 8) & X;
         addr = (addr & 0xFF) | (addr_high << 8);
     }
-    
+
     wr(addr, A & X & h);
 }
 
@@ -277,9 +293,10 @@ void SHY() {
     u16 addr = base + X;
     u8 h_plus_1 = ((base >> 8) + 1) & 0xFF;  // High byte of BASE address + 1
 
+    // Always perform dummy read (these instructions always take 5 cycles)
+    rd((base & 0xFF00) | ((base + X) & 0xFF));
+
     if (cross(base, X)) {
-        // Dummy read when page crossing
-        rd((base & 0xFF00) | (addr & 0xFF));
         // Page crossed: high byte gets corrupted
         // The corrupted high byte is: Y & (H+1)
         u8 addr_high = Y & h_plus_1;
@@ -296,9 +313,10 @@ void SHX() {
     u16 addr = base + Y;
     u8 h_plus_1 = ((base >> 8) + 1) & 0xFF;  // High byte of BASE address + 1
 
+    // Always perform dummy read (these instructions always take 5 cycles)
+    rd((base & 0xFF00) | ((base + Y) & 0xFF));
+
     if (cross(base, Y)) {
-        // Dummy read when page crossing
-        rd((base & 0xFF00) | (addr & 0xFF));
         // Page crossed: high byte gets corrupted
         // The corrupted high byte is: X & (H+1)
         u8 addr_high = X & h_plus_1;
@@ -310,21 +328,22 @@ void SHX() {
 }
 
 // TAS/SHS: Transfer A & X to S, store A & X & (high byte + 1)
-void TAS() { 
-    S = A & X; 
+void TAS() {
+    S = A & X;
     u16 base = abs();
     u16 addr = base + Y;
     u8 h_plus_1 = ((base >> 8) + 1) & 0xFF;  // High byte of BASE address + 1
-    
+
+    // Always perform dummy read (these instructions always take 5 cycles)
+    rd((base & 0xFF00) | ((base + Y) & 0xFF));
+
     if (cross(base, Y)) {
-        // Dummy read when page crossing
-        rd((base & 0xFF00) | (addr & 0xFF));
         // Page crossed: high byte of address is incremented (already done in addr calculation)
         // then ANDed with (A & X)
         u8 addr_high = (addr >> 8) & S;  // S = A & X
         addr = (addr & 0xFF) | (addr_high << 8);
     }
-    
+
     // Always store (A & X) & (H+1)
     wr(addr, S & h_plus_1);
 }
