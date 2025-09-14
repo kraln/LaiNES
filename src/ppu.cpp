@@ -24,6 +24,7 @@ u8 openBus;         // PPU I/O bus value for open bus behavior.
 Ctrl ctrl;      // PPUCTRL   ($2000) register.
 Mask mask;      // PPUMASK   ($2001) register.
 Status status;  // PPUSTATUS ($2002) register.
+bool vBlankSuppressed = false;  // VBlank suppression flag
 
 // Background latches:
 u8 nt, at, bgL, bgH;
@@ -81,7 +82,7 @@ void wr(u16 addr, u8 v)
 static bool latch;  // Detect second reading (moved out for reset access)
 
 /* Access PPU through registers. */
-template <bool write> u8 access(u16 index, u8 v)
+template <bool write> u8 access(u16 index, u8 v, bool rmw)
 {
     // v parameter contains the current data bus value
     
@@ -125,6 +126,13 @@ template <bool write> u8 access(u16 index, u8 v)
                 break;
             case 7:  // PPUDATA ($2007).
                 if (warmupCycles <= 0) {
+                    // For RMW instructions, perform an extra write
+                    if (rmw && write) {
+                        // Extra glitched write at (v & 0xFF00) | buffer
+                        // The buffer contains the incremented/decremented value
+                        u16 glitchAddr = (vAddr.addr & 0xFF00) | v;
+                        wr(glitchAddr, v);
+                    }
                     wr(vAddr.addr, v);
                     vAddr.addr += ctrl.incr ? 32 : 1;
                 }
@@ -146,6 +154,10 @@ template <bool write> u8 access(u16 index, u8 v)
             case 2:
                 v = (openBus & 0x1F) | status.r;  // Bits 4-0 from open bus, 7-5 from status
                 openBus = v;  // Reading $2002 updates open bus
+                // Check if we're reading $2002 on the exact cycle VBlank would be set
+                if (scanline == 241 && dot == 1) {
+                    vBlankSuppressed = true;  // Suppress VBlank flag setting
+                }
                 status.vBlank = 0; latch = 0;
                 break;
             case 3:  // OAMADDR is write-only, return PPU open bus
@@ -180,7 +192,7 @@ template <bool write> u8 access(u16 index, u8 v)
 
     return v;
 }
-template u8 access<0>(u16, u8); template u8 access<1>(u16, u8);
+template u8 access<0>(u16, u8, bool); template u8 access<1>(u16, u8, bool);
 
 /* Calculate graphics addresses */
 inline u16 nt_addr() { return 0x2000 | (vAddr.r & 0xFFF); }
@@ -310,7 +322,13 @@ void pixel()
                                  NTH_BIT(oam[i].dataL, 7 - sprX);
                 if (sprPalette == 0) continue;  // Transparent pixel.
 
-                if (oam[i].id == 0 && palette && x != 255) status.sprHit = true;
+                // Check for sprite 0 hit
+                if (oam[i].id == 0 && palette && x != 255) {
+                    // Don't set sprite 0 hit if sprites or BG are masked at x < 8
+                    if (x >= 8 || (mask.sprLeft && mask.bgLeft)) {
+                        status.sprHit = true;
+                    }
+                }
                 sprPalette |= (oam[i].attr & 3) << 2;
                 objPalette  = sprPalette + 16;
                 objPriority = oam[i].attr & 0x20;
@@ -339,7 +357,13 @@ template<Scanline s> void scanline_cycle()
 {
     static u16 addr;
 
-    if (s == NMI and dot == 1) { status.vBlank = true; if (ctrl.nmi) CPU::set_nmi(); }
+    if (s == NMI and dot == 1) {
+        if (!vBlankSuppressed) {
+            status.vBlank = true;
+            if (ctrl.nmi) CPU::set_nmi();
+        }
+        vBlankSuppressed = false;  // Clear suppression flag after the critical cycle
+    }
     else if (s == POST and dot == 0) GUI::new_frame(pixels);
     else if (s == VISIBLE or s == PRE)
     {

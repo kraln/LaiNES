@@ -85,7 +85,7 @@ union Addr
     unsigned r : 15;
 };
 
-template <bool write> u8 access(u16 index, u8 v = 0);
+template <bool write> u8 access(u16 index, u8 v = 0, bool rmw = false);
 void set_mirroring(Mirroring mode);
 void step();
 void reset();

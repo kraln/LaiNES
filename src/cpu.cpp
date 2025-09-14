@@ -26,6 +26,7 @@ Flags P;
 bool nmi, irq;
 u8 data_bus = 0;  // Open bus behavior
 bool is_put_cycle = false;  // Track whether current cycle is a put (write) cycle
+bool is_rmw_cycle = false;  // Track whether current cycle is part of a RMW instruction
 
 // Remaining clocks to end frame:
 const int TOTAL_CYCLES = 29781;
@@ -53,7 +54,7 @@ template<bool wr> inline u8 access(u16 addr, u8 v = 0)
     switch (addr)
     {
         case 0x0000 ... 0x1FFF:  r = &ram[addr % 0x800]; if (wr) *r = v; result = *r; break;  // RAM.
-        case 0x2000 ... 0x3FFF:  result = PPU::access<wr>(addr & 7, wr ? v : data_bus); break;  // PPU.
+        case 0x2000 ... 0x3FFF:  result = PPU::access<wr>(addr & 7, wr ? v : data_bus, is_rmw_cycle); break;  // PPU.
 
         // APU:
         case 0x4000 ... 0x4013:
@@ -160,12 +161,12 @@ template<Mode m> void AND() { G; upd_nz(A &= p); }
 template<Mode m> void EOR() { G; upd_nz(A ^= p); }
 template<Mode m> void ORA() { G; upd_nz(A |= p); }
 /* Read-Modify-Write */
-template<Mode m> void ASL() { G; P[C] = p & 0x80; wr(a, p); upd_nz(wr(a, p << 1)); }
-template<Mode m> void LSR() { G; P[C] = p & 0x01; wr(a, p); upd_nz(wr(a, p >> 1)); }
-template<Mode m> void ROL() { G; u8 c = P[C]     ; P[C] = p & 0x80; wr(a, p); upd_nz(wr(a, (p << 1) | c) ); }
-template<Mode m> void ROR() { G; u8 c = P[C] << 7; P[C] = p & 0x01; wr(a, p); upd_nz(wr(a, c | (p >> 1)) ); }
-template<Mode m> void DEC() { G; wr(a, p); upd_nz(wr(a, --p)); }
-template<Mode m> void INC() { G; wr(a, p); upd_nz(wr(a, ++p)); }
+template<Mode m> void ASL() { G; P[C] = p & 0x80; wr(a, p); is_rmw_cycle = true; upd_nz(wr(a, p << 1)); is_rmw_cycle = false; }
+template<Mode m> void LSR() { G; P[C] = p & 0x01; wr(a, p); is_rmw_cycle = true; upd_nz(wr(a, p >> 1)); is_rmw_cycle = false; }
+template<Mode m> void ROL() { G; u8 c = P[C]     ; P[C] = p & 0x80; wr(a, p); is_rmw_cycle = true; upd_nz(wr(a, (p << 1) | c) ); is_rmw_cycle = false; }
+template<Mode m> void ROR() { G; u8 c = P[C] << 7; P[C] = p & 0x01; wr(a, p); is_rmw_cycle = true; upd_nz(wr(a, c | (p >> 1)) ); is_rmw_cycle = false; }
+template<Mode m> void DEC() { G; wr(a, p); is_rmw_cycle = true; upd_nz(wr(a, --p)); is_rmw_cycle = false; }
+template<Mode m> void INC() { G; wr(a, p); is_rmw_cycle = true; upd_nz(wr(a, ++p)); is_rmw_cycle = false; }
 #undef G
 
 /* DEx, INx */
