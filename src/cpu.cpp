@@ -40,6 +40,8 @@ inline void upd_cv(u8 x, u8 y, s16 r) { P[C] = (r>0xFF); P[V] = ~(x^y) & (x^r) &
 inline void upd_nz(u8 x)              { P[N] = x & 0x80; P[Z] = (x == 0);              }
 // Does adding I to A cross a page?
 inline bool cross(u16 a, s8 i) { return ((a+i) & 0xFF00) != ((a & 0xFF00)); }
+// Overload for unsigned offsets
+inline bool cross(u16 a, u8 i) { return ((a+i) & 0xFF00) != ((a & 0xFF00)); }
 
 /* Memory access */
 void dma_oam(u8 bank);
@@ -269,39 +271,39 @@ void SHA_aby() {
 }
 
 // SHY: Store Y & (high byte + 1)
-void SHY() { 
+void SHY() {
     u16 base = abs();
     u16 addr = base + X;
     u8 h_plus_1 = ((base >> 8) + 1) & 0xFF;  // High byte of BASE address + 1
-    
+
     if (cross(base, X)) {
         // Dummy read when page crossing
         rd((base & 0xFF00) | (addr & 0xFF));
-        // Page crossed: high byte of address is incremented (already done in addr calculation)
-        // then ANDed with Y
-        u8 addr_high = (addr >> 8) & Y;
+        // Page crossed: high byte gets corrupted
+        // The corrupted high byte is: Y & (H+1)
+        u8 addr_high = Y & h_plus_1;
         addr = (addr & 0xFF) | (addr_high << 8);
     }
-    
+
     // Always store Y & (H+1)
     wr(addr, Y & h_plus_1);
 }
 
-// SHX: Store X & (high byte + 1)  
-void SHX() { 
+// SHX: Store X & (high byte + 1)
+void SHX() {
     u16 base = abs();
-    u16 addr = base + Y; 
+    u16 addr = base + Y;
     u8 h_plus_1 = ((base >> 8) + 1) & 0xFF;  // High byte of BASE address + 1
-    
+
     if (cross(base, Y)) {
         // Dummy read when page crossing
         rd((base & 0xFF00) | (addr & 0xFF));
-        // Page crossed: high byte of address is incremented (already done in addr calculation)
-        // then ANDed with X
-        u8 addr_high = (addr >> 8) & X;
+        // Page crossed: high byte gets corrupted
+        // The corrupted high byte is: X & (H+1)
+        u8 addr_high = X & h_plus_1;
         addr = (addr & 0xFF) | (addr_high << 8);
     }
-    
+
     // Always store X & (H+1)
     wr(addr, X & h_plus_1);
 }
