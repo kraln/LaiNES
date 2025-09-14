@@ -35,6 +35,9 @@ bool atLatchL, atLatchH;
 int scanline, dot;
 bool frameOdd;
 
+// PPU warmup counter (PPU ignores certain writes for ~29658 CPU cycles after reset)
+static int warmupCycles;
+
 inline bool rendering() { return mask.bg || mask.spr; }
 inline int spr_height() { return ctrl.sprSz ? 16 : 8; }
 
@@ -89,28 +92,43 @@ template <bool write> u8 access(u16 index, u8 v)
         openBus = v;  // All writes update PPU open bus
         switch (index)
         {
-            case 0:  ctrl.r = v; tAddr.nt = ctrl.nt; break;       // PPUCTRL   ($2000).
-            case 1:  mask.r = v; break;                           // PPUMASK   ($2001).
+            case 0:  // PPUCTRL   ($2000).
+                if (warmupCycles <= 0) { ctrl.r = v; tAddr.nt = ctrl.nt; }
+                break;
+            case 1:  // PPUMASK   ($2001).
+                if (warmupCycles <= 0) { mask.r = v; }
+                break;
             case 2:  // PPUSTATUS is read-only, write does nothing but update open bus
                 break;
             case 3:  oamAddr = v; break;                          // OAMADDR   ($2003).
             case 4:  oamMem[oamAddr++] = v; break;                // OAMDATA   ($2004).
             case 5:                                               // PPUSCROLL ($2005).
-                if (!latch) { fX = v & 7; tAddr.cX = v >> 3; }      // First write.
-                else  { tAddr.fY = v & 7; tAddr.cY = v >> 3; }      // Second write.
-                latch = !latch; break;
+                if (warmupCycles <= 0) {
+                    if (!latch) { fX = v & 7; tAddr.cX = v >> 3; }      // First write.
+                    else  { tAddr.fY = v & 7; tAddr.cY = v >> 3; }      // Second write.
+                    latch = !latch;
+                }
+                break;
             case 6:                                               // PPUADDR   ($2006).
-                if (!latch) {
-                    // First write: set high 6 bits (bits 8-13 of address)
-                    tAddr.addr = (tAddr.addr & 0x00FF) | ((v & 0x3F) << 8);
-                }                 // First write.
-                else {
-                    // Second write: set low 8 bits (bits 0-7 of address)
-                    tAddr.addr = (tAddr.addr & 0x3F00) | v;
-                    vAddr.r = tAddr.r;
-                }     // Second write.
-                latch = !latch; break;
-            case 7:  wr(vAddr.addr, v); vAddr.addr += ctrl.incr ? 32 : 1;  // PPUDATA ($2007).
+                if (warmupCycles <= 0) {
+                    if (!latch) {
+                        // First write: set high 6 bits (bits 8-13 of address)
+                        tAddr.addr = (tAddr.addr & 0x00FF) | ((v & 0x3F) << 8);
+                    }                 // First write.
+                    else {
+                        // Second write: set low 8 bits (bits 0-7 of address)
+                        tAddr.addr = (tAddr.addr & 0x3F00) | v;
+                        vAddr.r = tAddr.r;
+                    }     // Second write.
+                    latch = !latch;
+                }
+                break;
+            case 7:  // PPUDATA ($2007).
+                if (warmupCycles <= 0) {
+                    wr(vAddr.addr, v);
+                    vAddr.addr += ctrl.incr ? 32 : 1;
+                }
+                break;
         }
         return v;  // Writes return the value written
     }
@@ -372,6 +390,15 @@ template<Scanline s> void scanline_cycle()
 /* Execute a PPU cycle. */
 void step()
 {
+    // Decrement warmup counter (PPU step is called 3 times per CPU cycle)
+    static int ppuStepCounter = 0;
+    if (warmupCycles > 0) {
+        if (++ppuStepCounter >= 3) {
+            ppuStepCounter = 0;
+            warmupCycles--;
+        }
+    }
+
     switch (scanline)
     {
         case 0 ... 239:  scanline_cycle<VISIBLE>(); break;
@@ -398,6 +425,7 @@ void reset()
     ctrl.r = mask.r = status.r = 0;
     latch = 0;  // Reset the write latch
     readBuffer = 0;
+    warmupCycles = 29658;  // PPU warmup period in CPU cycles
 
     memset(pixels, 0x00, sizeof(pixels));
     memset(ciRam,  0xFF, sizeof(ciRam));
