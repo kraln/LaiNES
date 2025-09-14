@@ -25,6 +25,7 @@ u16 PC;
 Flags P;
 bool nmi, irq;
 u8 data_bus = 0;  // Open bus behavior
+bool is_put_cycle = false;  // Track whether current cycle is a put (write) cycle
 
 // Remaining clocks to end frame:
 const int TOTAL_CYCLES = 29781;
@@ -56,13 +57,13 @@ template<bool wr> inline u8 access(u16 addr, u8 v = 0)
 
         // APU:
         case 0x4000 ... 0x4013:
-        case            0x4015:          result = APU::access<wr>(elapsed(), addr, wr ? v : data_bus); break;
-        case            0x4017:  if (wr) result = APU::access<wr>(elapsed(), addr, v);
+        case            0x4015:          result = APU::access<wr>(elapsed(), addr, wr ? v : data_bus, is_put_cycle); break;
+        case            0x4017:  if (wr) result = APU::access<wr>(elapsed(), addr, v, is_put_cycle);
                                  else result = (data_bus & 0xE0) | (Joypad::read_state(1) & 0x1F);  // Joypad 1, bits 5-7 open bus.
                                  break;
 
         case            0x4014:  if (wr) dma_oam(v); break;                          // OAM DMA.
-        case            0x4016:  if (wr) { Joypad::write_strobe(v & 1); break; }     // Joypad strobe.
+        case            0x4016:  if (wr) { Joypad::write_strobe(v & 1, elapsed(), is_put_cycle); break; }     // Joypad strobe.
                                  else result = (data_bus & 0xE0) | (Joypad::read_state(0) & 0x1F);  // Joypad 0, bits 5-7 open bus.
                                  break;
         case 0x4018 ... 0x5FFF:  if (wr) result = v; else result = data_bus; break;  // Open bus - return current data_bus value
@@ -79,10 +80,10 @@ template<bool wr> inline u8 access(u16 addr, u8 v = 0)
     // Note: Reading from $4015 does NOT update the data bus
     return result;
 }
-inline u8  wr(u16 a, u8 v)      { T; return access<1>(a, v);   }
-inline u8  rd(u16 a)            { T; return access<0>(a);      }
+inline u8  wr(u16 a, u8 v)      { T; is_put_cycle = true; u8 result = access<1>(a, v); is_put_cycle = false; return result; }
+inline u8  rd(u16 a)            { T; is_put_cycle = false; return access<0>(a);      }
 // Dummy read - doesn't update data bus
-inline u8  rd_dummy(u16 a)      { T; u8 old_bus = data_bus; u8 result = access<0>(a); data_bus = old_bus; return result; }
+inline u8  rd_dummy(u16 a)      { T; is_put_cycle = false; u8 old_bus = data_bus; u8 result = access<0>(a); data_bus = old_bus; return result; }
 
 // Efficient bulk memory snapshot for debugging
 void snapshot_memory(u8* dest) {

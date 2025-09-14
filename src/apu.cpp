@@ -11,6 +11,7 @@ Blip_Buffer buf;
 const int OUT_SIZE = 4096;
 blip_sample_t outBuf[OUT_SIZE];
 
+
 void init()
 {
     buf.sample_rate(96000);
@@ -26,19 +27,21 @@ void reset()
     buf.clear();
 }
 
-template <bool write> u8 access(int elapsed, u16 addr, u8 v)
+template <bool write> u8 access(int elapsed, u16 addr, u8 v, bool is_put_cycle)
 {
-    if (write)
-        apu.write_register(elapsed, addr, v);
-    else if (addr == apu.status_addr) {
-        u8 status = apu.read_status(elapsed);
+    if (write) {
+        apu.write_register(elapsed, addr, v, is_put_cycle);
+    } else if (addr == 0x4015) {
+        // Status register
+        u8 status = apu.read_status(elapsed, is_put_cycle);
         // Bit 5 is open bus, preserve it from input value
         v = (status & 0xDF) | (v & 0x20);
     }
 
     return v;
 }
-template u8 access<0>(int, u16, u8); template u8 access<1>(int, u16, u8);
+template u8 access<0>(int, u16, u8, bool); template u8 access<1>(int, u16, u8, bool);
+
 
 void run_frame(int elapsed)
 {
