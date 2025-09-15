@@ -58,6 +58,8 @@ LaiNES implements the most common mappers, which should be enough for a good per
 - CNROM (Mapper 003)
 - MMC3, MMC6 / TxROM (Mapper 004)
 - AxROM (Mapper 007)
+- MMC2 / PxROM (Mapper 009)
+- MMC4 / FxROM (Mapper 010)
 - Color Dreams (Mapper 011)
 - BNROM / NINA-001 (Mapper 034)
 - GxROM (Mapper 066)

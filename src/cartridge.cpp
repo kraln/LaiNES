@@ -7,6 +7,8 @@
 #include "mappers/mapper3.hpp"
 #include "mappers/mapper4.hpp"
 #include "mappers/mapper7.hpp"
+#include "mappers/mapper9.hpp"
+#include "mappers/mapper10.hpp"
 #include "mappers/mapper11.hpp"
 #include "mappers/mapper34.hpp"
 #include "mappers/mapper66.hpp"
@@ -71,6 +73,8 @@ void load(const char* fileName)
         case 3:  mapper = new Mapper3(rom); break;
         case 4:  mapper = new Mapper4(rom); break;
         case 7:  mapper = new Mapper7(rom); break;
+        case 9:  mapper = new Mapper9(rom); break;
+        case 10: mapper = new Mapper10(rom); break;
         case 11: mapper = new Mapper11(rom); break;
         case 34: mapper = new Mapper34(rom); break;
         case 66: mapper = new Mapper66(rom); break;
