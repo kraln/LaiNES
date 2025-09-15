@@ -14,7 +14,7 @@ Compact, cycle-accurate NES emulator in ~1000 lines of C++ (well, originally).
 ## Requirements
 LaiNES should run on any Unix system that is compatible with the following tools.
 - SCons
-- C++11 compatible compiler (e.g. clang++)
+- C++14 compatible compiler (e.g. clang++)
 - SDL2 (including sdl2-ttf and sdl2-image)
 
 ## Building and running
@@ -33,12 +33,18 @@ brew install scons sdl2 sdl2_image sdl2_ttf
 Compile and run:
 ```sh
 git clone --recursive https://github.com/AndreaOrru/LaiNES && cd LaiNES
-scons
+scons -j4
 ./laines
 ```
 
 ## Usage
 The emulator comes bundled with a simple GUI to navigate the filesystem and set preferences. Use arrow keys and Enter to operate it. ESC toggles between emulation and menu.
+
+LaiNES can be run directly from the command line:
+```sh
+./laines path/to/rom.nes         # Run a specific ROM
+./laines rom.nes --shm           # Enable shared memory debugging interface
+```
 
 The size of the window and the controls are customizable. LaiNES supports multiple controllers and should work with joysticks as well. The default controls for the first player are as follows:
 
@@ -51,12 +57,14 @@ LaiNES implements the most common mappers, which should be enough for a good per
 - UxROM (Mapper 002)
 - CNROM (Mapper 003)
 - MMC3, MMC6 / TxROM (Mapper 004)
+- AxROM (Mapper 007)
+- BNROM / NINA-001 (Mapper 034)
 
 You can check the compatibility for each ROM in the following list:
 http://tuxnes.sourceforge.net/nesmapper.txt
 
 ## Technical notes
-The 6502 CPU and the PPU are implemented in just 219 and 283 lines of code respectively.
+The 6502 CPU and the PPU were originally implemented in just 219 and 283 lines of code respectively, though they have since grown to include full unofficial opcode support and enhanced accuracy.
 Meta-programming is used extensively to keep the codebase compact.
 Here is a good example of how that is achieved:
 ```c++
@@ -103,7 +111,7 @@ void exec()
 * If you're experiencing audio issues on Linux, try typing `export SDL_AUDIODRIVER=ALSA` before running the emulator.
 
 ## Contributors
-* [Jeff Katz](https://github.com/kraln) - Mapper 002 & 003, configuration.
+* [Jeff Katz](https://github.com/kraln) - Mapper 002, 003, 007, 034, configuration saving, unofficial opcodes, accuracy improvements, shared memory debugging, various usability fixes.
 * [PudgeMa](https://github.com/PudgeMa) - Scrollable menu and bug fixes.
 * [tyfkda](https://github.com/tyfkda) - Show error message instead of segfault for unsupported mappers.
 
