@@ -58,7 +58,9 @@ LaiNES implements the most common mappers, which should be enough for a good per
 - CNROM (Mapper 003)
 - MMC3, MMC6 / TxROM (Mapper 004)
 - AxROM (Mapper 007)
+- Color Dreams (Mapper 011)
 - BNROM / NINA-001 (Mapper 034)
+- GxROM (Mapper 066)
 
 You can check the compatibility for each ROM in the following list:
 http://tuxnes.sourceforge.net/nesmapper.txt
