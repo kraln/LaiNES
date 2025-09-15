@@ -247,25 +247,60 @@ void clear_oam()
 void eval_sprites()
 {
     int n = 0;
+    int m = 0;  // Sub-index for buggy overflow evaluation
+    bool overflow_bug_active = false;
+    int overflow_start_sprite = 0;
+
     for (int i = 0; i < 64; i++)
     {
-        int line = (scanline == 261 ? -1 : scanline) - oamMem[i*4 + 0];
-        // If the sprite is in the scanline, copy its properties into secondary OAM:
-        if (line >= 0 and line < spr_height())
+        if (!overflow_bug_active)
         {
-            if (n < 8)
+            int line = (scanline == 261 ? -1 : scanline) - oamMem[i*4 + 0];
+            // If the sprite is in the scanline, copy its properties into secondary OAM:
+            if (line >= 0 and line < spr_height())
             {
-                secOam[n].id   = i;
-                secOam[n].y    = oamMem[i*4 + 0];
-                secOam[n].tile = oamMem[i*4 + 1];
-                secOam[n].attr = oamMem[i*4 + 2];
-                secOam[n].x    = oamMem[i*4 + 3];
-                n++;
+                if (n < 8)
+                {
+                    secOam[n].id   = i;
+                    secOam[n].y    = oamMem[i*4 + 0];
+                    secOam[n].tile = oamMem[i*4 + 1];
+                    secOam[n].attr = oamMem[i*4 + 2];
+                    secOam[n].x    = oamMem[i*4 + 3];
+                    n++;
+                }
+                else
+                {
+                    // Found 9th sprite - set overflow flag and start buggy evaluation
+                    status.sprOvf = true;
+                    overflow_bug_active = true;
+                    overflow_start_sprite = i;
+                    m = 0;  // Start with Y coordinate check
+                }
+            }
+        }
+        else
+        {
+            // Buggy sprite overflow evaluation
+            // The hardware bug: PPU continues checking but uses incorrect addressing
+            int addr = (i * 4 + m) & 0xFF;
+            int line = (scanline == 261 ? -1 : scanline) - oamMem[addr];
+
+            if (line >= 0 && line < spr_height())
+            {
+                status.sprOvf = true;
+                m = (m + 1) & 3;  // Increment byte index (wraps 0-3)
+                // In real hardware, both sprite and byte indices increment incorrectly
             }
             else
             {
-                status.sprOvf = true;
-                break;
+                // Incorrectly increment both indices when sprite not in range
+                m = (m + 1) & 3;
+                // The PPU increments sprite index when m wraps to 0
+                if (m == 0)
+                {
+                    // Hardware increments sprite index here
+                    // But due to the bug, it might skip sprites
+                }
             }
         }
     }
