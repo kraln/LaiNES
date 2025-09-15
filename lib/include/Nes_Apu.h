@@ -34,11 +34,11 @@ public:
 	// Write to register (0x4000-0x4017, except 0x4014 and 0x4016)
 	enum { start_addr = 0x4000 };
 	enum { end_addr   = 0x4017 };
-	void write_register( cpu_time_t, cpu_addr_t, int data );
+	void write_register( cpu_time_t, cpu_addr_t, int data, bool is_put_cycle = true );
 	
 	// Read from status register at 0x4015
 	enum { status_addr = 0x4015 };
-	int read_status( cpu_time_t );
+	int read_status( cpu_time_t, bool is_put_cycle = false );
 	
 	// Run all oscillators up to specified time, end current time frame, then
 	// start a new time frame at time 0. Time frames have no effect on emulation
@@ -120,6 +120,12 @@ private:
 	int osc_enables;
 	int frame_mode;
 	bool irq_flag;
+
+	// Accurate frame counter state
+	int frame_counter_cycles;  // Cycles since frame counter reset
+	int frame_counter_step;    // Current step in sequence (0-3 or 0-4)
+	int frame_counter_reset_delay; // Cycles until frame counter resets
+	bool frame_step_clocked[5]; // Track which steps have been clocked
 	void (*irq_notifier_)( void* user_data );
 	void* irq_data;
 	Nes_Square::Synth square_synth; // shared by squares

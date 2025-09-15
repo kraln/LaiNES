@@ -6,8 +6,11 @@
 #include "mappers/mapper2.hpp"
 #include "mappers/mapper3.hpp"
 #include "mappers/mapper4.hpp"
+#include "mappers/mapper7.hpp"
+#include "mappers/mapper34.hpp"
 #include "ppu.hpp"
 #include "cartridge.hpp"
+#include "shm_debug.hpp"
 
 namespace Cartridge {
 
@@ -39,6 +42,10 @@ void signal_scanline()
 void load(const char* fileName)
 {
     FILE* f = fopen(fileName, "rb");
+    if (!f) {
+        fprintf(stderr, "Failed to open ROM file: %s\n", fileName);
+        return;
+    }
 
     fseek(f, 0, SEEK_END);
     int size = ftell(f);
@@ -61,6 +68,8 @@ void load(const char* fileName)
         case 2:  mapper = new Mapper2(rom); break;
         case 3:  mapper = new Mapper3(rom); break;
         case 4:  mapper = new Mapper4(rom); break;
+        case 7:  mapper = new Mapper7(rom); break;
+        case 34: mapper = new Mapper34(rom); break;
         default:
             fprintf(stderr, "%s: mapper %d not supported\n", fileName, mapperNum);
             return;
@@ -69,6 +78,11 @@ void load(const char* fileName)
     CPU::power();
     PPU::reset();
     APU::reset();
+    
+    // Set shared memory flag if enabled
+    if (ShmDebug::shm_enabled && ShmDebug::shm_ptr) {
+        ShmDebug::shm_ptr->rom_loaded = true;
+    }
 }
 
 bool loaded()

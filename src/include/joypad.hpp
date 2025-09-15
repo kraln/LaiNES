@@ -5,7 +5,7 @@ namespace Joypad {
 
 
 u8 read_state(int n);
-void write_strobe(bool v);
+void write_strobe(bool v, int cycle, bool is_put_cycle);
 
 
 }

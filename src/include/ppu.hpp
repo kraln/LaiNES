@@ -5,7 +5,7 @@ namespace PPU {
 
 
 enum Scanline  { VISIBLE, POST, NMI, PRE };
-enum Mirroring { VERTICAL, HORIZONTAL };
+enum Mirroring { VERTICAL, HORIZONTAL, ONE_SCREEN_HI, ONE_SCREEN_LO, FOUR_SCREEN };
 
 /* Sprite buffer */
 struct Sprite
@@ -77,17 +77,23 @@ union Addr
     };
     struct
     {
-        unsigned l : 8;
-        unsigned h : 7;
+        unsigned l : 8;   // Low byte (bits 0-7)
+        unsigned h : 6;   // High byte (bits 8-13)
+        unsigned   : 1;   // Unused (bit 14)
     };
     unsigned addr : 14;
     unsigned r : 15;
 };
 
-template <bool write> u8 access(u16 index, u8 v = 0);
+template <bool write> u8 access(u16 index, u8 v = 0, bool rmw = false);
 void set_mirroring(Mirroring mode);
 void step();
 void reset();
+
+// Exposed for debugging
+extern u8 ciRam[0x800];  // Nametable RAM
+extern u8 cgRam[0x20];   // Palette RAM  
+extern u8 oamMem[0x100]; // OAM memory
 
 
 }

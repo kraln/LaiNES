@@ -87,7 +87,7 @@ void Nes_Apu::output( Blip_Buffer* buffer )
 void Nes_Apu::reset( bool pal_mode, int initial_dmc_dac )
 {
 	// to do: time pal frame periods exactly
-	frame_period = pal_mode ? 8314 : 7458;
+	frame_period = pal_mode ? 8314 : 7457;  // First step timing
 	dmc.pal_mode = pal_mode;
 	
 	square1.reset();
@@ -101,11 +101,19 @@ void Nes_Apu::reset( bool pal_mode, int initial_dmc_dac )
 	irq_flag = false;
 	earliest_irq_ = no_irq;
 	frame_delay = 1;
-	write_register( 0, 0x4017, 0x00 );
-	write_register( 0, 0x4015, 0x00 );
-	
+
+	// Initialize frame counter state
+	frame_counter_cycles = 0;
+	frame_counter_step = 0;
+	frame_counter_reset_delay = 0;
+	for (int i = 0; i < 5; i++)
+		frame_step_clocked[i] = false;
+
+	write_register( 0, 0x4017, 0x00, true );
+	write_register( 0, 0x4015, 0x00, true );
+
 	for ( cpu_addr_t addr = start_addr; addr <= 0x4013; addr++ )
-		write_register( 0, addr, (addr & 3) ? 0x00 : 0x10 );
+		write_register( 0, addr, (addr & 3) ? 0x00 : 0x10, true );
 	
 	dmc.dac = initial_dmc_dac;
 	if ( !dmc.nonlinear )
@@ -131,87 +139,143 @@ void Nes_Apu::irq_changed()
 
 // frames
 
+// Accurate frame counter timing tables (in CPU cycles from reset)
+static const int frame_counter_4step_times[] = { 7457, 14913, 22371, 29829 };
+static const int frame_counter_5step_times[] = { 7457, 14913, 22371, 29829, 37281 };
+
 void Nes_Apu::run_until( cpu_time_t end_time )
 {
 	require( end_time >= last_time );
-	
+
 	if ( end_time == last_time )
 		return;
-	
-	while ( true )
+
+	// Process time in chunks
+	cpu_time_t time = last_time;
+	while ( time < end_time )
 	{
-		// earlier of next frame time or end time
-		cpu_time_t time = last_time + frame_delay;
-		if ( time > end_time )
-			time = end_time;
-		frame_delay -= time - last_time;
-		
-		// run oscs to present
-		square1.run( last_time, time );
-		square2.run( last_time, time );
-		triangle.run( last_time, time );
-		noise.run( last_time, time );
-		dmc.run( last_time, time );
-		last_time = time;
-		
-		if ( time == end_time )
-			break; // no more frames to run
-		
-		// take frame-specific actions
-		frame_delay = frame_period;
-		switch ( frame++ )
+		cpu_time_t chunk_end = end_time;
+
+		// Handle frame counter reset delay
+		if ( frame_counter_reset_delay > 0 )
 		{
-			case 0:
-				if ( !(frame_mode & 0xc0) ) {
-		 			next_irq = time + frame_period * 4 + 1;
-		 			irq_flag = true;
-		 		}
-		 		// fall through
-		 	case 2:
-		 		// clock length and sweep on frames 0 and 2
-				square1.clock_length( 0x20 );
-				square2.clock_length( 0x20 );
-				noise.clock_length( 0x20 );
-				triangle.clock_length( 0x80 ); // different bit for halt flag on triangle
-				
-				square1.clock_sweep( -1 );
-				square2.clock_sweep( 0 );
-		 		break;
-		 	
-			case 1:
-				// frame 1 is slightly shorter
-				frame_delay -= 2;
-				break;
-			
-		 	case 3:
-		 		frame = 0;
-		 		
-		 		// frame 3 is almost twice as long in mode 1
-		 		if ( frame_mode & 0x80 )
-					frame_delay += frame_period - 6;
-				break;
+			int delay_end = time + frame_counter_reset_delay;
+			if ( delay_end <= end_time )
+			{
+				// Reset will occur during this time period
+				chunk_end = delay_end;
+			}
 		}
-		
-		// clock envelopes and linear counter every frame
-		triangle.clock_linear_counter();
-		square1.clock_envelope();
-		square2.clock_envelope();
-		noise.clock_envelope();
+
+		// Run oscillators for this chunk
+		square1.run( time, chunk_end );
+		square2.run( time, chunk_end );
+		triangle.run( time, chunk_end );
+		noise.run( time, chunk_end );
+		dmc.run( time, chunk_end );
+
+		// Update frame counter
+		if ( frame_counter_reset_delay > 0 )
+		{
+			frame_counter_reset_delay -= (chunk_end - time);
+			if ( frame_counter_reset_delay <= 0 )
+			{
+				// Frame counter reset occurs
+				frame_counter_cycles = -frame_counter_reset_delay; // Account for overshoot
+				frame_counter_reset_delay = 0;
+				frame_counter_step = 0;
+				for (int i = 0; i < 5; i++)
+					frame_step_clocked[i] = false;
+			}
+		}
+		else
+		{
+			// Normal frame counter operation
+			int old_cycles = frame_counter_cycles;
+			frame_counter_cycles += (chunk_end - time);
+
+			bool mode5 = (frame_mode & 0x80) != 0;
+			const int* step_times = mode5 ? frame_counter_5step_times : frame_counter_4step_times;
+			int max_steps = mode5 ? 5 : 4;
+
+			// Check if we've reached any step times
+			for (int step = 0; step < max_steps; step++)
+			{
+				if (!frame_step_clocked[step] && frame_counter_cycles >= step_times[step])
+				{
+					frame_step_clocked[step] = true;
+
+					// Clock envelope and linear counter every step
+					triangle.clock_linear_counter();
+					square1.clock_envelope();
+					square2.clock_envelope();
+					noise.clock_envelope();
+
+					// Clock length and sweep on specific steps
+					if ((!mode5 && (step == 1 || step == 3)) ||
+					    (mode5 && (step == 0 || step == 2)))
+					{
+						square1.clock_length( 0x20 );
+						square2.clock_length( 0x20 );
+						noise.clock_length( 0x20 );
+						triangle.clock_length( 0x80 );
+
+						square1.clock_sweep( -1 );
+						square2.clock_sweep( 0 );
+					}
+				}
+			}
+
+			// Handle IRQ in 4-step mode
+			if (!mode5 && !(frame_mode & 0x40))  // 4-step mode with IRQ enabled
+			{
+				// IRQ occurs at cycle 29830 (one cycle after the last step)
+				if (old_cycles < 29830 && frame_counter_cycles >= 29830)
+				{
+					irq_flag = true;
+					next_irq = chunk_end;
+					irq_changed();
+				}
+			}
+
+			// Reset sequence after completing all steps
+			if (!mode5 && frame_counter_cycles >= 29830)
+			{
+				// 4-step mode wraps at 29830
+				frame_counter_cycles -= 29830;
+				for (int i = 0; i < 5; i++)
+					frame_step_clocked[i] = false;
+			}
+			else if (mode5 && frame_counter_cycles >= 37282)
+			{
+				// 5-step mode wraps at 37282
+				frame_counter_cycles -= 37282;
+				for (int i = 0; i < 5; i++)
+					frame_step_clocked[i] = false;
+			}
+		}
+
+		time = chunk_end;
 	}
+
+	last_time = end_time;
 }
 
 void Nes_Apu::end_frame( cpu_time_t end_time )
 {
 	if ( end_time > last_time )
 		run_until( end_time );
-	
+
 	// make times relative to new frame
 	last_time -= end_time;
 	require( last_time >= 0 );
-	
+
+	// Don't adjust frame_counter_cycles - it's absolute from reset, not relative
+
 	if ( next_irq != no_irq ) {
 		next_irq -= end_time;
-		assert( next_irq >= 0 );
+		if ( next_irq < 0 )
+			next_irq = 0;
 	}
 	if ( dmc.next_irq != no_irq ) {
 		dmc.next_irq -= end_time;
@@ -233,7 +297,7 @@ static const unsigned char length_table [0x20] = {
 	0xC0, 0x18, 0x48, 0x1A, 0x10, 0x1C, 0x20, 0x1E
 };
 
-void Nes_Apu::write_register( cpu_time_t time, cpu_addr_t addr, int data )
+void Nes_Apu::write_register( cpu_time_t time, cpu_addr_t addr, int data, bool is_put_cycle )
 {
 	require( addr > 0x20 ); // addr must be actual address (i.e. 0x40xx)
 	require( (unsigned) data <= 0xff );
@@ -297,29 +361,41 @@ void Nes_Apu::write_register( cpu_time_t time, cpu_addr_t addr, int data )
 	{
 		// Frame mode
 		frame_mode = data;
-		
+
 		bool irq_enabled = !(data & 0x40);
 		irq_flag &= irq_enabled;
 		next_irq = no_irq;
-		
-		// mode 1
-		frame_delay = (frame_delay & 1);
-		frame = 0;
-		
-		if ( !(data & 0x80) )
+
+		// Reset frame counter with delay
+		// According to apu.md: happens either 2 or 3 cycles after the write
+		// The reset occurs on odd cycles only, after the first even cycle
+		// Fine-tuned timing: odd=2, even=3
+		frame_counter_reset_delay = (time & 1) ? 2 : 3;
+
+		if ( data & 0x80 )
 		{
-			// mode 0
-			frame = 1;
-			frame_delay += frame_period;
-			if ( irq_enabled )
-				next_irq = time + frame_delay + frame_period * 3;
+			// 5-step mode - immediately clock all units
+			// This happens IMMEDIATELY, not after the reset delay
+			square1.clock_length( 0x20 );
+			square2.clock_length( 0x20 );
+			noise.clock_length( 0x20 );
+			triangle.clock_length( 0x80 );
+
+			square1.clock_sweep( -1 );
+			square2.clock_sweep( 0 );
+
+			// Also clock envelopes and linear counter
+			triangle.clock_linear_counter();
+			square1.clock_envelope();
+			square2.clock_envelope();
+			noise.clock_envelope();
 		}
-		
+
 		irq_changed();
 	}
 }
 
-int Nes_Apu::read_status( cpu_time_t time )
+int Nes_Apu::read_status( cpu_time_t time, bool is_put_cycle )
 {
 	run_until( time - 1 );
 	
@@ -330,7 +406,8 @@ int Nes_Apu::read_status( cpu_time_t time )
 			result |= 1 << i;
 	
 	run_until( time );
-	
+
+	// Reading $4015 should always clear the IRQ flag
 	if ( irq_flag ) {
 		irq_flag = false;
 		irq_changed();

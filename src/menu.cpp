@@ -66,6 +66,8 @@ void Menu::clear()
     entries.clear();
     clear_error();
     cursor = 0;
+    top = 0;
+    bottom = MAX_ENTRY;
 }
 
 void Menu::clear_error()
