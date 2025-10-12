@@ -908,7 +908,15 @@ void run_frame()
         exec();
     }
 
+    // Audio finalization order is critical:
+    // 1. APU writes its samples
+    // 2. Mapper expansion audio writes its samples (includes IRQ processing)
+    // 3. Mapper audio frame finalized
+    // 4. Buffer is closed and samples are read
     APU::run_frame(elapsed_internal());
+    Cartridge::run_mapper_audio(elapsed_internal());
+    Cartridge::end_mapper_audio_frame(elapsed_internal());
+    APU::end_buffer_frame(elapsed_internal());
 }
 
 

@@ -11,6 +11,7 @@
 #include "mappers/mapper9.hpp"
 #include "mappers/mapper10.hpp"
 #include "mappers/mapper11.hpp"
+#include "mappers/mapper24.hpp"
 #include "mappers/mapper34.hpp"
 #include "mappers/mapper66.hpp"
 #include "ppu.hpp"
@@ -39,9 +40,9 @@ template <bool wr> u8 chr_access(u16 addr, u8 v)
 }
 template u8 chr_access<0>(u16, u8); template u8 chr_access<1>(u16, u8);
 
-void signal_scanline()
+void signal_scanline(int scanline)
 {
-    mapper->signal_scanline();
+    mapper->signal_scanline(scanline);
 }
 
 /* Load the ROM from a file. */
@@ -78,6 +79,8 @@ void load(const char* fileName)
         case 9:  mapper = new Mapper9(rom); break;
         case 10: mapper = new Mapper10(rom); break;
         case 11: mapper = new Mapper11(rom); break;
+        case 24: mapper = new Mapper24(rom, false); break;  // VRC6a
+        case 26: mapper = new Mapper24(rom, true); break;   // VRC6b
         case 34: mapper = new Mapper34(rom); break;
         case 66: mapper = new Mapper66(rom); break;
         default:
@@ -108,6 +111,28 @@ void reset()
 bool loaded()
 {
     return mapper != nullptr;
+}
+
+// Run mapper expansion audio up to given cycle count
+void run_mapper_audio(int elapsed)
+{
+    if (mapper && mapper->has_audio())
+        mapper->run_audio(elapsed);
+}
+
+// End audio frame for mapper expansion audio
+void end_mapper_audio_frame(int elapsed)
+{
+    if (mapper && mapper->has_audio())
+        mapper->end_audio_frame(elapsed);
+}
+
+// Check if mapper IRQ should be active at given time
+bool check_mapper_irq(int elapsed)
+{
+    if (mapper)
+        return mapper->check_irq(elapsed);
+    return false;
 }
 
 

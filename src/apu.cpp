@@ -56,11 +56,21 @@ static int last_irq_check_time = -1;
 void run_frame(int elapsed)
 {
     apu.end_frame(elapsed);
-    buf.end_frame(elapsed);
+    // Note: buf.end_frame() is NOT called here - it's called from CPU after mapper audio
 
     // Reset IRQ check tracker at frame end
     last_irq_check_time = -1;
 
+    // Note: Samples are NOT read here - they're read in end_buffer_frame()
+    // after the buffer has been finalized
+}
+
+// Finalize the buffer after all audio sources (APU + mapper) have written to it
+void end_buffer_frame(int elapsed)
+{
+    buf.end_frame(elapsed);
+
+    // Now that the buffer is finalized, read the samples
     if (buf.samples_avail() >= OUT_SIZE)
         GUI::new_samples(outBuf, buf.read_samples(outBuf, OUT_SIZE));
 
@@ -86,6 +96,12 @@ bool check_irq(int elapsed)
     // - Any value <= current time: IRQ time has passed
     return (irq_time == Nes_Apu::irq_waiting) ||
            (irq_time != Nes_Apu::no_irq && irq_time <= elapsed);
+}
+
+// Get audio buffer for mapper expansion audio
+Blip_Buffer& get_buffer()
+{
+    return buf;
 }
 
 

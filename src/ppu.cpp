@@ -463,8 +463,6 @@ template<Scanline s> void scanline_cycle()
             case           338:  nt = rd(addr); break;
             case           340:  nt = rd(addr); if (s == PRE && rendering() && frameOdd) dot++;
         }
-        // Signal scanline to mapper:
-        if (dot == 260 && rendering()) Cartridge::signal_scanline();
     }
 }
 
@@ -487,6 +485,10 @@ void step()
         case       241:  scanline_cycle<NMI>();     break;
         case       261:  scanline_cycle<PRE>();     break;
     }
+
+    // Signal scanline to mapper at dot 260 (after sprite fetches, when A12 toggles for MMC3)
+    if (dot == 260) Cartridge::signal_scanline(scanline);
+
     // Update dot and scanline counters:
     if (++dot > 340)
     {

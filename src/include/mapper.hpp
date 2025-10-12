@@ -22,11 +22,19 @@ class Mapper
     Mapper(u8* rom);
     ~Mapper();
 
-    u8 read(u16 addr);
+    virtual u8 read(u16 addr);
     virtual u8 write(u16 addr, u8 v) { return v; }
 
     virtual u8 chr_read(u16 addr);
     virtual u8 chr_write(u16 addr, u8 v) { return v; }
 
-    virtual void signal_scanline() {}
+    virtual void signal_scanline(int scanline) {}
+
+    // Expansion audio support
+    virtual bool has_audio() { return false; }
+    virtual void run_audio(int elapsed) {}
+    virtual void end_audio_frame(int elapsed) {}
+
+    // IRQ support
+    virtual bool check_irq(int elapsed) { return false; }
 };
