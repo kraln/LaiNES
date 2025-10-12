@@ -41,5 +41,10 @@ u8 Mapper7::write(u16 addr, u8 v)
 
 u8 Mapper7::chr_write(u16 addr, u8 v)
 {
-    return chr[addr] = v;
+    // Only write to CHR RAM for pattern table addresses
+    if (addr < 0x2000)
+        return chr[addr] = v;
+
+    // For nametable addresses, delegate to base class
+    return Mapper::chr_write(addr, v);
 }

@@ -38,13 +38,49 @@ u8 Mapper::read(u16 addr)
 {
     if (addr >= 0x8000)
         return prg[prgMap[(addr - 0x8000) / 0x2000] + ((addr - 0x8000) % 0x2000)];
-    else
+    else if (addr >= 0x6000)
         return prgRam[addr - 0x6000];
+    return 0;  // Should not reach here for $5000-$5FFF (handled by CPU open bus logic)
 }
 
 u8 Mapper::chr_read(u16 addr)
 {
-    return chr[chrMap[addr / 0x400] + (addr % 0x400)];
+    // Pattern tables ($0000-$1FFF)
+    if (addr < 0x2000)
+        return chr[chrMap[addr / 0x400] + (addr % 0x400)];
+
+    // Nametables ($2000-$2FFF) - use standard mirroring
+    if (addr >= 0x2000 && addr < 0x3000)
+    {
+        u16 mirrorAddr = PPU::nt_mirror(addr);
+        return PPU::ciRam[mirrorAddr];
+    }
+
+    // Mirror $3000-$3FFF to $2000-$2FFF
+    if (addr >= 0x3000 && addr < 0x4000)
+        return chr_read(addr - 0x1000);
+
+    return 0;
+}
+
+u8 Mapper::chr_write(u16 addr, u8 v)
+{
+    // CHR-RAM writes ($0000-$1FFF)
+    if (addr < 0x2000 && chrRam)
+        chr[chrMap[addr / 0x400] + (addr % 0x400)] = v;
+
+    // Nametable writes ($2000-$2FFF) - use standard mirroring
+    if (addr >= 0x2000 && addr < 0x3000)
+    {
+        u16 mirrorAddr = PPU::nt_mirror(addr);
+        PPU::ciRam[mirrorAddr] = v;
+    }
+
+    // Mirror $3000-$3FFF to $2000-$2FFF
+    if (addr >= 0x3000 && addr < 0x4000)
+        return chr_write(addr - 0x1000, v);
+
+    return v;
 }
 
 /* PRG mapping functions */

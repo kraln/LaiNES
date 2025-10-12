@@ -69,6 +69,7 @@ LaiNES implements the most common mappers, which should be enough for a good per
 - UxROM (Mapper 002)
 - CNROM (Mapper 003)
 - MMC3, MMC6 / TxROM (Mapper 004)
+- MMC5 / ExROM (Mapper 005)
 - AxROM (Mapper 007)
 - MMC2 / PxROM (Mapper 009)
 - MMC4 / FxROM (Mapper 010)
@@ -128,7 +129,7 @@ void exec()
 * If you're experiencing audio issues on Linux, try typing `export SDL_AUDIODRIVER=ALSA` before running the emulator.
 
 ## Contributors
-* [Jeff Katz](https://github.com/kraln) - Mappers 002, 003, 007, 009, 010, 011, 024, 034, 066, configuration saving, unofficial opcodes, accuracy improvements, shared memory debugging, expansion audio support, various usability fixes.
+* [Jeff Katz](https://github.com/kraln) - Mappers 002, 003, 005, 007, 009, 010, 011, 024, 034, 066, configuration saving, unofficial opcodes, accuracy improvements, shared memory debugging, expansion audio support, various usability fixes.
 * [PudgeMa](https://github.com/PudgeMa) - Scrollable menu and bug fixes.
 * [tyfkda](https://github.com/tyfkda) - Show error message instead of segfault for unsupported mappers.
 

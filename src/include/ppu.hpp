@@ -92,8 +92,18 @@ void reset();
 
 // Exposed for debugging
 extern u8 ciRam[0x800];  // Nametable RAM
-extern u8 cgRam[0x20];   // Palette RAM  
+extern u8 cgRam[0x20];   // Palette RAM
 extern u8 oamMem[0x100]; // OAM memory
+
+// Exposed for MMC5 (needs to know rendering phase)
+extern int scanline;     // Current scanline
+extern int dot;          // Current dot/cycle within scanline
+extern Ctrl ctrl;        // PPUCTRL register (for sprite size, pattern tables)
+extern Mask mask;        // PPUMASK register (for rendering enabled check)
+extern Mirroring mirroring;  // Current mirroring mode
+
+// Nametable mirroring function (for mappers to use)
+u16 nt_mirror(u16 addr);
 
 
 }

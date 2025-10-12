@@ -6,9 +6,9 @@
 class Mapper
 {
     u8* rom;
-    bool chrRam = false;
 
   protected:
+    bool chrRam = false;
     u32 prgMap[4];
     u32 chrMap[8];
 
@@ -25,8 +25,12 @@ class Mapper
     virtual u8 read(u16 addr);
     virtual u8 write(u16 addr, u8 v) { return v; }
 
+    // Returns true if mapper handles CPU addresses in $5000-$5FFF (expansion area)
+    // Base implementation returns false (open bus behavior)
+    virtual bool handles_expansion_addr(u16 addr) { return false; }
+
     virtual u8 chr_read(u16 addr);
-    virtual u8 chr_write(u16 addr, u8 v) { return v; }
+    virtual u8 chr_write(u16 addr, u8 v);
 
     virtual void signal_scanline(int scanline) {}
 
@@ -37,4 +41,6 @@ class Mapper
 
     // IRQ support
     virtual bool check_irq(int elapsed) { return false; }
+    virtual void ppu_read_hook(u16 addr) {}
+    virtual void ppu_write_hook(u16 index, u8 v) {}  // Hook for PPU register writes ($2000-$2007)
 };

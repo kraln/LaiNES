@@ -64,6 +64,10 @@ u8 Mapper9::write(u16 addr, u8 v)
 
 u8 Mapper9::chr_read(u16 addr)
 {
+    // For nametables, delegate to base class
+    if (addr >= 0x2000)
+        return Mapper::chr_read(addr);
+
     u8 value = chr[chrMap[addr / 0x400] + (addr % 0x400)];
 
     /* Check for latch triggers AFTER the read */
@@ -95,5 +99,7 @@ u8 Mapper9::chr_read(u16 addr)
 
 u8 Mapper9::chr_write(u16 addr, u8 v)
 {
+    if (addr >= 0x2000)
+        return Mapper::chr_write(addr, v);
     return chr[addr] = v;
 }

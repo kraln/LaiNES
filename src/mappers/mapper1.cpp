@@ -80,5 +80,7 @@ u8 Mapper1::write(u16 addr, u8 v)
 
 u8 Mapper1::chr_write(u16 addr, u8 v)
 {
+    if (addr >= 0x2000)
+        return Mapper::chr_write(addr, v);
     return chr[addr] = v;
 }

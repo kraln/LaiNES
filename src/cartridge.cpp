@@ -7,6 +7,7 @@
 #include "mappers/mapper2.hpp"
 #include "mappers/mapper3.hpp"
 #include "mappers/mapper4.hpp"
+#include "mappers/mapper5.hpp"
 #include "mappers/mapper7.hpp"
 #include "mappers/mapper9.hpp"
 #include "mappers/mapper10.hpp"
@@ -35,14 +36,22 @@ template u8 access<0>(u16, u8); template u8 access<1>(u16, u8);
 /* CHR-ROM/RAM access */
 template <bool wr> u8 chr_access(u16 addr, u8 v)
 {
-    if (!wr) return mapper->chr_read(addr);
-    else     return mapper->chr_write(addr, v);
+    if (!wr) {
+        mapper->ppu_read_hook(addr);
+        return mapper->chr_read(addr);
+    }
+    else return mapper->chr_write(addr, v);
 }
 template u8 chr_access<0>(u16, u8); template u8 chr_access<1>(u16, u8);
 
 void signal_scanline(int scanline)
 {
     mapper->signal_scanline(scanline);
+}
+
+void ppu_write_hook(u16 index, u8 v)
+{
+    mapper->ppu_write_hook(index, v);
 }
 
 /* Load the ROM from a file. */
@@ -75,6 +84,7 @@ void load(const char* fileName)
         case 2:  mapper = new Mapper2(rom); break;
         case 3:  mapper = new Mapper3(rom); break;
         case 4:  mapper = new Mapper4(rom); break;
+        case 5:  mapper = new Mapper5(rom); break;
         case 7:  mapper = new Mapper7(rom); break;
         case 9:  mapper = new Mapper9(rom); break;
         case 10: mapper = new Mapper10(rom); break;
@@ -133,6 +143,12 @@ bool check_mapper_irq(int elapsed)
     if (mapper)
         return mapper->check_irq(elapsed);
     return false;
+}
+
+bool handles_expansion_addr(u16 addr)
+{
+    if (!mapper) return false;
+    return mapper->handles_expansion_addr(addr);
 }
 
 

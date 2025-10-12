@@ -116,8 +116,15 @@ template<bool wr> inline u8 access(u16 addr, u8 v = 0)
         case            0x4016:  if (wr) { Joypad::write_strobe(v & 1, elapsed_internal(), is_put_cycle); break; }     // Joypad strobe.
                                  else result = (data_bus & 0xE0) | (Joypad::read_state(0) & 0x1F);  // Joypad 0, bits 5-7 open bus.
                                  break;
-        case 0x4018 ... 0x5FFF:  if (wr) result = v; else result = data_bus; break;  // Open bus - return current data_bus value
-        case 0x6000 ... 0xFFFF:  result = Cartridge::access<wr>(addr, v); break;              // Cartridge.
+        case 0x4018 ... 0x4FFF:  if (wr) result = v; else result = data_bus; break;  // Open bus - return current data_bus value
+        case 0x5000 ... 0x5FFF:  // $5000-$5FFF: Expansion area (mapper-specific or open bus)
+            if (Cartridge::handles_expansion_addr(addr)) {
+                result = Cartridge::access<wr>(addr, v);  // Mapper handles this address
+            } else {
+                if (wr) result = v; else result = data_bus;  // Open bus
+            }
+            break;
+        case 0x6000 ... 0xFFFF:  result = Cartridge::access<wr>(addr, v); break;  // Cartridge PRG RAM/ROM.
     }
     // Update data bus - writes always update it, reads update it except for $4015
     if (wr) {
