@@ -50,11 +50,16 @@ template <bool write> u8 access(int elapsed, u16 addr, u8 v, bool is_put_cycle)
 }
 template u8 access<0>(int, u16, u8, bool); template u8 access<1>(int, u16, u8, bool);
 
+// Track last time we ran APU for IRQ checking
+static int last_irq_check_time = -1;
 
 void run_frame(int elapsed)
 {
     apu.end_frame(elapsed);
     buf.end_frame(elapsed);
+
+    // Reset IRQ check tracker at frame end
+    last_irq_check_time = -1;
 
     if (buf.samples_avail() >= OUT_SIZE)
         GUI::new_samples(outBuf, buf.read_samples(outBuf, OUT_SIZE));
@@ -67,8 +72,12 @@ void run_frame(int elapsed)
 // Check if APU IRQ should be active at the given time
 bool check_irq(int elapsed)
 {
-    // Run APU up to current time so it can set IRQ flags
-    apu.run_until(elapsed);
+    // Only run APU if time has advanced since last check
+    // This prevents running APU multiple times per CPU cycle
+    if (elapsed != last_irq_check_time) {
+        apu.run_until(elapsed);
+        last_irq_check_time = elapsed;
+    }
 
     cpu_time_t irq_time = apu.earliest_irq();
 

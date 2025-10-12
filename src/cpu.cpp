@@ -35,6 +35,21 @@ u8 data_bus = 0;  // Open bus behavior
 bool is_put_cycle = false;  // Track whether current cycle is a put (write) cycle
 bool is_rmw_cycle = false;  // Track whether current cycle is part of a RMW instruction
 
+// DMA cycle tracking:
+// The CPU alternates between "get" (read) and "put" (write) cycles aligned with APU cycles.
+// - Get cycle: occurs during 2nd half of APU cycle (can read from bus)
+// - Put cycle: occurs during 1st half of APU cycle (can write to bus)
+// This is critical for DMA alignment - OAM/DMC DMA can only read on get cycles.
+bool is_get_cycle = false;  // Track whether current CPU cycle is a get (read-capable) cycle
+int apu_cycle_phase = 0;    // Track APU cycle phase (0 or 1) for DMA alignment
+
+// DMA state machine
+enum DMAState { DMA_IDLE, DMA_OAM_ACTIVE, DMA_DMC_PENDING };
+DMAState dma_state = DMA_IDLE;
+bool oam_dma_active = false;    // OAM DMA currently in progress
+int oam_dma_index = 0;          // Current byte being transferred (0-255)
+u16 oam_dma_addr = 0;           // Current source address for OAM DMA
+
 // Remaining clocks to end frame:
 const int TOTAL_CYCLES = 29781;
 int remainingCycles;
@@ -64,6 +79,11 @@ inline void tick() {
     tick_single();
     tick_single();
     tick_single();
+
+    // Update APU cycle alignment for DMA
+    // CPU cycle corresponds to 1 APU cycle, which alternates between put and get phases
+    apu_cycle_phase = 1 - apu_cycle_phase;
+    is_get_cycle = (apu_cycle_phase == 1);  // Get cycles occur on 2nd half of APU cycle
 }
 
 /* Flags updating */
@@ -207,7 +227,44 @@ inline u16 rd16_d(u16 a, u16 b) { return rd(a) | (rd(b) << 8); }  // Read from A
 inline u16 rd16(u16 a)          { return rd16_d(a, a+1);       }
 inline u8  push(u8 v)           { return wr(0x100 + (S--), v); }
 inline u8  pop()                { return rd(0x100 + (++S));    }
-void dma_oam(u8 bank) { for (int i = 0; i < 256; i++)  wr(0x2014, rd(bank*0x100 + i)); }
+
+/* Cycle-accurate OAM DMA
+ * Takes 513 or 514 cycles depending on alignment:
+ * - 1 cycle: halt (dummy cycle after write to $4014)
+ * - 0-1 cycles: alignment (wait for get cycle if currently on put cycle)
+ * - 512 cycles: 256 get/put pairs (read from CPU memory, write to $2004)
+ *
+ * Implementation note: rd() and wr() already include cycle timing, so we use them
+ * directly. Each rd/wr pair = 2 cycles (1 get + 1 put).
+ */
+void dma_oam(u8 bank) {
+    // Cycle 1: Halt cycle (dummy cycle consuming the write cycle)
+    T;
+
+    // Alignment: OAM DMA can only start reading on a get cycle
+    // If we're currently on a put cycle, we need to wait one cycle
+    if (!is_get_cycle) {
+        T;  // Alignment cycle (514 total instead of 513)
+    }
+
+    // Mark OAM DMA as active so DMC DMA knows it can interrupt
+    oam_dma_active = true;
+    oam_dma_addr = bank * 0x100;
+    oam_dma_index = 0;
+
+    // Now we're guaranteed to be on a get cycle
+    // Perform 256 get/put pairs (512 cycles total)
+    // rd() reads a byte (1 cycle), wr() writes it (1 cycle) = 2 cycles per iteration
+    for (int i = 0; i < 256; i++) {
+        oam_dma_index = i;
+        u8 value = rd(oam_dma_addr + i);  // Get cycle (reads from CPU memory)
+        wr(0x2004, value);                 // Put cycle (writes to OAMDATA)
+    }
+
+    // OAM DMA complete
+    oam_dma_active = false;
+    oam_dma_index = 0;
+}
 
 /* Addressing modes */
 inline u16 imm()   { return PC++;                                       }
@@ -744,7 +801,77 @@ void set_irq(bool v) { irq = v; }
 
 int get_ppu_sub_cycle() { return ppu_sub_cycle; }
 
-int dmc_read(void*, cpu_addr_t addr) { return access<0>(addr); }
+/* DMC DMA read - called by APU when it needs a sample byte
+ * DMC DMA timing:
+ * - 1 cycle: halt (CPU is stalled)
+ * - 1 cycle: dummy read (no useful work)
+ * - 0-1 cycles: alignment (wait for get cycle if currently on put cycle)
+ * - 1 cycle: actual read
+ * Total: 3-4 cycles
+ *
+ * Bus conflicts: When DMC reads from address X where (X & 0x1F) is $00-$1F,
+ * it creates a bus conflict with APU registers at $4000-$401F.
+ * The CPU performs two reads:
+ *   1. Read from the sample address
+ *   2. Read from $4000 | (addr & 0x1F)
+ * For addresses like $4016, this affects the controller register.
+ */
+int dmc_read(void*, cpu_addr_t addr) {
+    // DMC DMA has higher priority than OAM DMA
+    // If OAM DMA is active, it gets interrupted and must realign
+    bool interrupted_oam = oam_dma_active;
+
+    // Cycle 1: Halt (CPU stalled)
+    T;
+
+    // Cycle 2: Dummy read cycle (no useful work done)
+    T;
+
+    // If we interrupted OAM DMA, it may need extra cycles for realignment
+    // This can add 1-3 extra cycles depending on timing
+    // For now, simplified: no extra cycles (OAM will handle realignment itself)
+    // TODO: Implement precise OAM interruption timing if needed
+    (void)interrupted_oam;  // Suppress unused warning
+
+    // Alignment: DMC DMA can only read on a get cycle
+    // If we're currently on a put cycle, wait one cycle
+    if (!is_get_cycle) {
+        T;  // Alignment cycle (4 total instead of 3)
+    }
+
+    // Now we're on a get cycle - perform the actual read
+    // Use direct memory access to avoid double-counting cycles
+    u8 value = access<0>(addr);
+
+    // Bus conflict: APU registers are mirrored every $20 bytes throughout
+    // the entire address space. When DMC DMA reads from address X, it
+    // simultaneously accesses APU register at $4000 | (X & 0x1F).
+    // This happens on the SAME cycle (no extra time).
+    //
+    // For registers with side effects ($4015, $4016, $4017), we need to
+    // trigger those side effects WITHOUT consuming extra cycles.
+    u16 apu_addr = 0x4000 | (addr & 0x1F);
+
+    // Only trigger side effects for registers that matter
+    if (apu_addr == 0x4015 || apu_addr == 0x4016 || apu_addr == 0x4017) {
+        // Directly call access without going through rd() to avoid cycle counting
+        // The bus conflict happens simultaneously with the sample read
+        u8 apu_value = access<0>(apu_addr);
+
+        // For controllers, combine the values:
+        // bits 0-4 from controller, bits 5-7 from sample
+        if (apu_addr == 0x4016 || apu_addr == 0x4017) {
+            value = (value & 0xE0) | (apu_value & 0x1F);
+        }
+        // For $4015, the read clears IRQ flag but doesn't update data bus
+        // so we keep the sample value
+    }
+
+    // Update data bus with the final value (including bus conflicts)
+    data_bus = value;
+
+    return value;
+}
 
 /* Turn on the CPU */
 void power()
@@ -758,6 +885,14 @@ void power()
     nmi_line = nmi_pending = nmi_latch = nmi_previous = false;
     irq = false;
     ppu_sub_cycle = 0;
+
+    // Initialize DMA cycle tracking
+    is_get_cycle = false;
+    apu_cycle_phase = 0;
+    oam_dma_active = false;
+    oam_dma_index = 0;
+    oam_dma_addr = 0;
+
     INT<RESET>();
 }
 
