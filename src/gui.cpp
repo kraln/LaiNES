@@ -32,6 +32,8 @@ Menu* joystickMenu[2];
 FileMenu* fileMenu;
 
 bool pause = true;
+bool fast_forward = false;
+const int FAST_FORWARD_MULTIPLIER = 8;
 
 /* Set the window size multiplier */
 void set_size(int mul)
@@ -221,7 +223,15 @@ void new_frame(u32* pixels)
 
 void new_samples(const blip_sample_t* samples, size_t count)
 {
-    soundQueue->write(samples, count);
+    // Skip audio during fast forward to prevent buffer blocking
+    if (!fast_forward) {
+        soundQueue->write(samples, count);
+    }
+}
+
+bool is_fast_forward()
+{
+    return fast_forward;
 }
 
 /* Render the screen */
@@ -238,6 +248,13 @@ void render()
     // Draw the menu:
     if (pause) menu->render();
 
+    // Draw fast forward indicator:
+    if (fast_forward && !pause) {
+        SDL_Texture* ff_indicator = gen_text(">>", { 255, 255, 0 });
+        render_texture(ff_indicator, TEXT_RIGHT, 0);
+        SDL_DestroyTexture(ff_indicator);
+    }
+
     SDL_RenderPresent(renderer);
 }
 
@@ -246,6 +263,10 @@ void toggle_pause()
 {
     pause = not pause;
     menu  = mainMenu;
+
+    // Disable fast forward when pausing
+    if (pause)
+        fast_forward = false;
 
     if (pause)
         SDL_SetTextureColorMod(gameTexture,  60,  60,  60);
@@ -258,7 +279,11 @@ void set_paused(bool paused)
 {
     pause = paused;
     menu  = paused ? mainMenu : nullptr;
-    
+
+    // Disable fast forward when pausing
+    if (pause)
+        fast_forward = false;
+
     if (pause)
         SDL_SetTextureColorMod(gameTexture,  60,  60,  60);
     else
@@ -322,20 +347,31 @@ void run()
                         menu->update(keys);
             }
 
+        // Fast forward: hold Tab to enable
+        fast_forward = keys[SDL_SCANCODE_TAB] and Cartridge::loaded() and not pause;
+
         if (not pause) {
-            CPU::run_frame();
-            // Update shared memory if enabled
+            // Run multiple frames when fast forwarding
+            int frames_to_run = fast_forward ? FAST_FORWARD_MULTIPLIER : 1;
+            for (int i = 0; i < frames_to_run; i++) {
+                CPU::run_frame();
+            }
+            // Update shared memory if enabled (only once per render frame)
             if (ShmDebug::shm_enabled) {
                 ShmDebug::update_cpu_state();
                 ShmDebug::update_ppu_state();
             }
         }
+
+        // Always render to maintain smooth 60 FPS visuals
         render();
 
-        // Wait to mantain framerate:
-        frameTime = SDL_GetTicks() - frameStart;
-        if (frameTime < DELAY)
-            SDL_Delay((int)(DELAY - frameTime));
+        // Wait to maintain framerate (skip when fast forwarding):
+        if (!fast_forward) {
+            frameTime = SDL_GetTicks() - frameStart;
+            if (frameTime < DELAY)
+                SDL_Delay((int)(DELAY - frameTime));
+        }
     }
 }
 

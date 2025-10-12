@@ -48,6 +48,10 @@ The emulator comes bundled with a simple GUI to navigate the filesystem and set 
 
 The main menu includes a **Reset** option to reload and restart the current ROM (only enabled when a ROM is loaded).
 
+### Gameplay Controls
+- **ESC**: Toggle between gameplay and menu
+- **Tab** (hold): Fast forward mode (8x speed, indicated by ">>" in top-right corner)
+
 LaiNES can be run directly from the command line:
 ```sh
 ./laines path/to/rom.nes         # Run a specific ROM

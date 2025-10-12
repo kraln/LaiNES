@@ -50,6 +50,10 @@ void run_frame(int elapsed)
 
     if (buf.samples_avail() >= OUT_SIZE)
         GUI::new_samples(outBuf, buf.read_samples(outBuf, OUT_SIZE));
+
+    // During fast forward, clear the buffer to prevent buildup
+    if (GUI::is_fast_forward() && buf.samples_avail() > 0)
+        buf.clear();
 }
 
 
