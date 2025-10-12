@@ -38,7 +38,15 @@ scons -j4
 ```
 
 ## Usage
-The emulator comes bundled with a simple GUI to navigate the filesystem and set preferences. Use arrow keys and Enter to operate it. ESC toggles between emulation and menu.
+The emulator comes bundled with a simple GUI to navigate the filesystem and set preferences. ESC toggles between emulation and menu.
+
+### Menu Navigation
+- **Arrow Keys**: Navigate up/down through menu items
+- **Enter**: Select menu item
+- **Page Up/Down**: Navigate one page at a time
+- **Letter Keys (File Browser)**: Jump to entries starting with that letter
+
+The main menu includes a **Reset** option to reload and restart the current ROM (only enabled when a ROM is loaded).
 
 LaiNES can be run directly from the command line:
 ```sh

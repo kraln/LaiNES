@@ -12,17 +12,20 @@ class Entry
 {
     std::string label;
     std::function<void()> callback;
+    std::function<bool()> enabled_check;
 
     bool selected = false;
     SDL_Texture* whiteTexture = nullptr;
     SDL_Texture* redTexture   = nullptr;
+    SDL_Texture* greyTexture  = nullptr;
 
   public:
-    Entry(std::string label, std::function<void()> callback = []{});
+    Entry(std::string label, std::function<void()> callback = []{}, std::function<bool()> enabled_check = []{ return true; });
     ~Entry();
 
     void set_label(std::string label);
     inline std::string& get_label() { return label; }
+    inline bool is_enabled() { return enabled_check(); }
 
     virtual void select()   { selected = true;  };
     virtual void unselect() { selected = false; };
@@ -46,6 +49,7 @@ class ControlEntry : public Entry
 
 class Menu
 {
+  protected:
     const int MAX_ENTRY = GUI::HEIGHT / FONT_SZ - 2;
     int cursor = 0;
     int top = 0;
@@ -59,8 +63,11 @@ class Menu
     void clear();
     void clear_error();
     void sort_by_label();
-    void update(u8 const* keys);
+    virtual void update(u8 const* keys);
     void render();
+
+  protected:
+    void jump_to(int newCursor);
 };
 
 class FileMenu : public Menu
@@ -70,6 +77,7 @@ class FileMenu : public Menu
 
   public:
     FileMenu();
+    void update(u8 const* keys) override;
 };
 
 

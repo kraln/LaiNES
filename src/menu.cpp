@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <dirent.h>
 #include <unistd.h>
 #include "cartridge.hpp"
@@ -9,7 +10,8 @@ namespace GUI {
 using namespace std;
 
 
-Entry::Entry(string label, function<void()> callback) : callback(callback)
+Entry::Entry(string label, function<void()> callback, function<bool()> enabled_check)
+    : callback(callback), enabled_check(enabled_check)
 {
     set_label(label);
 }
@@ -18,6 +20,7 @@ Entry::~Entry()
 {
     SDL_DestroyTexture(whiteTexture);
     SDL_DestroyTexture(redTexture);
+    SDL_DestroyTexture(greyTexture);
 }
 
 void Entry::set_label(string label)
@@ -26,13 +29,19 @@ void Entry::set_label(string label)
 
     if (whiteTexture != nullptr) SDL_DestroyTexture(whiteTexture);
     if (redTexture   != nullptr) SDL_DestroyTexture(redTexture);
+    if (greyTexture  != nullptr) SDL_DestroyTexture(greyTexture);
 
     whiteTexture = gen_text(label, { 255, 255, 255 });
     redTexture   = gen_text(label, { 255,   0,   0 });
+    greyTexture  = gen_text(label, { 100, 100, 100 });
 }
 
 void Entry::render(int x, int y) {
-    render_texture(selected ? redTexture : whiteTexture, x, y);
+    if (!is_enabled()) {
+        render_texture(greyTexture, x, y);
+    } else {
+        render_texture(selected ? redTexture : whiteTexture, x, y);
+    }
 }
 
 ControlEntry::ControlEntry(string action, SDL_Scancode* key) : key(key),
@@ -87,32 +96,92 @@ void Menu::sort_by_label()
     entries[0]->select();
 }
 
+void Menu::jump_to(int newCursor)
+{
+    if (newCursor < 0 || newCursor >= entries.size())
+        return;
+
+    entries[cursor]->unselect();
+    cursor = newCursor;
+
+    // Update visible window to show the new cursor
+    if (cursor < top) {
+        top = cursor;
+        bottom = top + MAX_ENTRY;
+    } else if (cursor >= bottom) {
+        bottom = cursor + 1;
+        top = bottom - MAX_ENTRY;
+    }
+
+    entries[cursor]->select();
+    clear_error();
+}
+
 void Menu::update(u8 const* keys)
 {
     int oldCursor = cursor;
 
-    if (keys[SDL_SCANCODE_DOWN] and cursor < entries.size() - 1)
+    if (keys[SDL_SCANCODE_PAGEDOWN])
     {
-        cursor++;
-        if (cursor == bottom) {
-            bottom += 1;
-            top += 1;
+        int target = cursor;
+        for (int i = 0; i < MAX_ENTRY && target < entries.size() - 1; i++) {
+            target++;
+            while (target < entries.size() - 1 && !entries[target]->is_enabled())
+                target++;
+        }
+        if (entries[target]->is_enabled())
+            jump_to(target);
+    }
+    else if (keys[SDL_SCANCODE_PAGEUP])
+    {
+        int target = cursor;
+        for (int i = 0; i < MAX_ENTRY && target > 0; i++) {
+            target--;
+            while (target > 0 && !entries[target]->is_enabled())
+                target--;
+        }
+        if (entries[target]->is_enabled())
+            jump_to(target);
+    }
+    else if (keys[SDL_SCANCODE_DOWN] and cursor < entries.size() - 1)
+    {
+        do {
+            cursor++;
+            if (cursor == bottom) {
+                bottom += 1;
+                top += 1;
+            }
+        } while (cursor < entries.size() - 1 && !entries[cursor]->is_enabled());
+
+        // If we ended on a disabled entry, revert
+        if (!entries[cursor]->is_enabled()) {
+            cursor = oldCursor;
         }
         clear_error();
     }
     else if (keys[SDL_SCANCODE_UP] and cursor > 0)
     {
-        cursor--;
-        if (cursor < top) {
-            top -= 1;
-            bottom -= 1;
+        do {
+            cursor--;
+            if (cursor < top) {
+                top -= 1;
+                bottom -= 1;
+            }
+        } while (cursor > 0 && !entries[cursor]->is_enabled());
+
+        // If we ended on a disabled entry, revert
+        if (!entries[cursor]->is_enabled()) {
+            cursor = oldCursor;
         }
         clear_error();
     }
-    entries[oldCursor]->unselect();
-    entries[cursor]->select();
 
-    if (keys[SDL_SCANCODE_RETURN])
+    if (oldCursor != cursor) {
+        entries[oldCursor]->unselect();
+        entries[cursor]->select();
+    }
+
+    if (keys[SDL_SCANCODE_RETURN] && entries[cursor]->is_enabled())
         entries[cursor]->trigger();
 }
 
@@ -170,6 +239,34 @@ FileMenu::FileMenu()
 {
     char cwd[512];
     change_dir(getcwd(cwd, 512));
+}
+
+void FileMenu::update(u8 const* keys)
+{
+    // Call base update for standard navigation
+    Menu::update(keys);
+
+    // Letter jump: find first entry starting with pressed letter
+    for (int scancode = SDL_SCANCODE_A; scancode <= SDL_SCANCODE_Z; scancode++)
+    {
+        if (keys[scancode])
+        {
+            char letter = 'a' + (scancode - SDL_SCANCODE_A);
+
+            // Search from current position forward, then wrap around
+            for (int offset = 1; offset < entries.size(); offset++)
+            {
+                int idx = (cursor + offset) % entries.size();
+                string label = entries[idx]->get_label();
+
+                if (!label.empty() && tolower(label[0]) == letter && entries[idx]->is_enabled())
+                {
+                    jump_to(idx);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 

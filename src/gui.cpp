@@ -81,6 +81,7 @@ void init()
     // Menus:
     mainMenu = new Menu;
     mainMenu->add(new Entry("Load ROM", []{ menu = fileMenu; }));
+    mainMenu->add(new Entry("Reset",    []{ Cartridge::reset(); toggle_pause(); }, []{ return Cartridge::loaded(); }));
     mainMenu->add(new Entry("Settings", []{ menu = settingsMenu; }));
     mainMenu->add(new Entry("Exit",     []{ exit(0); }));
 

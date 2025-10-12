@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <string>
 #include "apu.hpp"
 #include "cpu.hpp"
 #include "mappers/mapper0.hpp"
@@ -20,6 +21,7 @@ namespace Cartridge {
 
 
 Mapper* mapper = nullptr;  // Mapper chip.
+std::string currentRomPath;  // Path to currently loaded ROM
 
 /* PRG-ROM access */
 template <bool wr> u8 access(u16 addr, u8 v)
@@ -86,10 +88,20 @@ void load(const char* fileName)
     CPU::power();
     PPU::reset();
     APU::reset();
-    
+
+    // Store the ROM path for reset functionality
+    currentRomPath = fileName;
+
     // Set shared memory flag if enabled
     if (ShmDebug::shm_enabled && ShmDebug::shm_ptr) {
         ShmDebug::shm_ptr->rom_loaded = true;
+    }
+}
+
+void reset()
+{
+    if (!currentRomPath.empty()) {
+        load(currentRomPath.c_str());
     }
 }
 
