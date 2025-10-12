@@ -23,7 +23,14 @@ u8 ram[0x800];
 u8 A, X, Y, S;
 u16 PC;
 Flags P;
-bool nmi, irq;
+
+// NMI edge detection with 1-instruction delay
+bool nmi_line = false;      // Current state of NMI line from PPU
+bool nmi_pending = false;   // Edge detected but not yet latched (delays by 1 instruction)
+bool nmi_latch = false;     // Ready to trigger interrupt (promoted from pending)
+bool nmi_previous = false;  // Previous state for edge detection
+
+bool irq;
 u8 data_bus = 0;  // Open bus behavior
 bool is_put_cycle = false;  // Track whether current cycle is a put (write) cycle
 bool is_rmw_cycle = false;  // Track whether current cycle is part of a RMW instruction
@@ -32,6 +39,9 @@ bool is_rmw_cycle = false;  // Track whether current cycle is part of a RMW inst
 const int TOTAL_CYCLES = 29781;
 int remainingCycles;
 inline int elapsed() { return TOTAL_CYCLES - remainingCycles; }
+
+// Track if we already polled for interrupts this instruction (for special cases like RTI)
+bool interrupt_already_polled = false;
 
 /* Cycle emulation */
 #define T   tick()
@@ -353,19 +363,36 @@ void TAS() {
 void LAS() { u16 a = aby(); u8 p = rd(a); S &= p; upd_nz(A = X = S); }
 
 /* Stack operations */
-void PLP() { rd(PC+1); T; P.set(pop()); }  // Dummy read from PC+1, then stack operation
+void PLP() {
+    // Cycle 2: Dummy read from PC+1 (polling already happened in exec() before I flag changes)
+    rd(PC+1);
+    T;  // Cycle 3: Dummy read at stack pointer
+    P.set(pop());  // Cycle 4: Pull flags from stack
+}
 void PHP() { rd(PC+1); push(P.get() | (1 << 4)); }  // Dummy read from PC+1, B flag set
 void PLA() { rd(PC+1); T; A = pop(); upd_nz(A);  }  // Dummy read from PC+1, then stack operation
 void PHA() { rd(PC+1); push(A); }  // Dummy read from PC+1
 
+/* Forward declarations for interrupt handling */
+template<IntType t> void INT();
+
 /* Flow control (branches, jumps) */
 template<Flag f, bool v> void br()
-{ 
-    s8 j = rd(imm()); 
-    if (P[f] == v) { 
-        if (cross(PC, j)) { rd((PC & 0xFF00) | ((PC + j) & 0xFF)); } 
-        T; PC += j; 
-    } 
+{
+    s8 j = rd(imm());  // Cycle 2: Read operand (polling already happened in exec())
+    if (P[f] == v) {
+        if (cross(PC, j)) {
+            rd((PC & 0xFF00) | ((PC + j) & 0xFF));  // Cycle 3: Dummy read on page cross
+            // Poll before cycle 4 for page-crossing branches
+            if (nmi_latch) {
+                nmi_latch = false;  // Clear latch when servicing NMI
+                INT<NMI>();
+                return;
+            }
+            else if (irq && !P[I]) { INT<IRQ>(); return; }
+        }
+        T; PC += j;  // Cycle 3 (no cross) or 4 (page cross): Update PC
+    }
 }
 void JMP_IND() { u16 i = rd16(imm16()); PC = rd16_d(i, (i&0xFF00) | ((i+1) % 0x100)); }
 void JMP()     { PC = rd16(imm16()); }
@@ -373,9 +400,28 @@ void JSR()     { u16 t = PC+1; T; push(t >> 8); push(t); PC = rd16(imm16()); }
 
 /* Return instructions */
 void RTS() { rd(PC+1); T;  PC = (pop() | (pop() << 8)) + 1; T; }  // Dummy read from PC+1
-void RTI() { PLP(); PC =  pop() | (pop() << 8);         }
+void RTI() {
+    interrupt_already_polled = true;  // Skip general poll in exec()
+    rd(PC+1);  // Cycle 2: Dummy read from PC+1
+    T;         // Cycle 3: Dummy read at stack pointer
+    P.set(pop());  // Cycle 4: Pull flags from stack (I flag updated)
+    PC = pop() | (pop() << 8);  // Cycles 5-6: Pull PC from stack
 
-template<Flag f, bool v> void flag() { P[f] = v; rd(PC+1); }  // Clear and set flags, dummy read from PC+1
+    // Poll for interrupts AFTER restoring PC and flags
+    // The restored PC is the correct value to push if interrupt occurs
+    if (nmi_latch) {
+        nmi_latch = false;  // Clear latch when servicing NMI
+        INT<NMI>();
+    }
+    else if (irq && !P[I]) INT<IRQ>();
+}
+
+template<Flag f, bool v> void flag() {
+    // Cycle 2: Dummy read from PC+1 (polling already happened in exec())
+    rd(PC+1);
+    // Modify the flag after polling, so CLI/SEI poll before the I flag changes
+    P[f] = v;
+}
 template<IntType t> void INT()
 {
     if (t == BRK) rd(PC+1);  // BRK performs dummy read from PC+1
@@ -391,22 +437,54 @@ template<IntType t> void INT()
     P[I] = true;
                           /*   NMI    Reset    IRQ     BRK  */
     constexpr u16 vect[] = { 0xFFFA, 0xFFFC, 0xFFFE, 0xFFFE };
-    
-    // Check for NMI hijacking during BRK
-    if (t == BRK && nmi) {
-        PC = rd16(0xFFFA);  // Use NMI vector
-        nmi = false;        // Clear NMI flag
-    } else {
-        PC = rd16(vect[t]);
-        if (t == NMI) nmi = false;
+
+    // Vector fetch with NMI hijacking check
+    u16 vector_addr = vect[t];
+
+    // Check for NMI hijacking BEFORE vector fetch
+    // This applies to BRK and IRQ (not NMI itself or RESET)
+    if ((t == BRK || t == IRQ) && nmi_latch) {
+        // NMI hijacks the interrupt - use NMI vector instead
+        vector_addr = 0xFFFA;
+        nmi_latch = false;  // Clear NMI latch
     }
+
+    // Cycles 6-7: Read interrupt vector
+    PC = rd16(vector_addr);
+
+    // For normal NMI, latch is already cleared in polling code
 }
 void NOP() { rd(PC+1); }  // Dummy read from PC+1
 
 /* Execute a CPU instruction */
 void exec()
 {
-    switch (rd(PC++))  // Fetch the opcode.
+    u8 opcode = rd(PC++);  // Cycle 1: Fetch the opcode (PC now points to next byte)
+
+    // General interrupt polling: happens after cycle 1 (reading opcode), before cycle 2.
+    // Special instructions (RTI) may override this by setting interrupt_already_polled.
+    if (!interrupt_already_polled) {
+        if (nmi_latch) {
+            PC--;  // Point back to the thrown-away opcode
+            nmi_latch = false;  // Clear latch when servicing NMI
+            INT<NMI>();
+            return;
+        }
+        else if (irq && !P[I]) {
+            PC--;  // Point back to the thrown-away opcode
+            INT<IRQ>();
+            return;
+        }
+    }
+    interrupt_already_polled = false;  // Reset for next instruction
+
+    // Promote pending NMI to latch (provides 1-instruction delay for interrupt latency)
+    if (nmi_pending) {
+        nmi_latch = true;
+        nmi_pending = false;
+    }
+
+    switch (opcode)
     {
         // Select the right function to emulate the instruction:
         case 0x00: return INT<BRK>()  ;  case 0x01: return ORA<izx>()  ;
@@ -560,7 +638,15 @@ void exec()
     }
 }
 
-void set_nmi(bool v) { nmi = v; }
+void set_nmi(bool v) {
+    // Edge detection: detect 0→1 transition
+    if (!nmi_previous && v) {
+        nmi_pending = true;  // Rising edge detected, set pending (will be latched after 1 instruction)
+    }
+    nmi_previous = v;
+    nmi_line = v;
+}
+
 void set_irq(bool v) { irq = v; }
 
 int dmc_read(void*, cpu_addr_t addr) { return access<0>(addr); }
@@ -574,7 +660,8 @@ void power()
     A = X = Y = S = 0x00;
     memset(ram, 0xFF, sizeof(ram));
 
-    nmi = irq = false;
+    nmi_line = nmi_pending = nmi_latch = nmi_previous = false;
+    irq = false;
     INT<RESET>();
 }
 
@@ -585,9 +672,8 @@ void run_frame()
 
     while (remainingCycles > 0)
     {
-        if (nmi) INT<NMI>();
-        else if (irq and !P[I]) INT<IRQ>();
-
+        // Interrupt polling now happens in exec() after reading the opcode,
+        // with special handling for RTI which polls after restoring flags.
         exec();
     }
 

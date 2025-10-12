@@ -97,7 +97,19 @@ template <bool write> u8 access(u16 index, u8 v, bool rmw)
         switch (index)
         {
             case 0:  // PPUCTRL   ($2000).
-                if (warmupCycles <= 0) { ctrl.r = v; tAddr.nt = ctrl.nt; }
+                if (warmupCycles <= 0) {
+                    bool old_nmi_enable = ctrl.nmi;
+                    ctrl.r = v;
+                    tAddr.nt = ctrl.nt;
+                    // Edge detection: if enabling NMI (0→1) and VBlank flag is set, trigger NMI
+                    if (!old_nmi_enable && ctrl.nmi && status.vBlank) {
+                        CPU::set_nmi(true);
+                    }
+                    // If disabling NMI, clear the line
+                    else if (old_nmi_enable && !ctrl.nmi) {
+                        CPU::set_nmi(false);
+                    }
+                }
                 break;
             case 1:  // PPUMASK   ($2001).
                 if (warmupCycles <= 0) { mask.r = v; }
@@ -162,6 +174,8 @@ template <bool write> u8 access(u16 index, u8 v, bool rmw)
                     vBlankSuppressed = true;  // Suppress VBlank flag setting
                 }
                 status.vBlank = 0; latch = 0;
+                // Clear NMI line since VBlank flag is now cleared
+                CPU::set_nmi(false);
                 break;
             case 3:  // OAMADDR is write-only, return PPU open bus
                 v = openBus;
@@ -398,7 +412,7 @@ template<Scanline s> void scanline_cycle()
     if (s == NMI and dot == 1) {
         if (!vBlankSuppressed) {
             status.vBlank = true;
-            if (ctrl.nmi) CPU::set_nmi();
+            if (ctrl.nmi) CPU::set_nmi(true);  // Set NMI line when VBlank starts and NMI enabled
         }
         vBlankSuppressed = false;  // Clear suppression flag after the critical cycle
     }
@@ -438,7 +452,12 @@ template<Scanline s> void scanline_cycle()
             case 280 ... 304:  if (s == PRE)            v_update(); break;  // Update vertical position.
 
             // No shift reloading:
-            case             1:  addr = nt_addr(); if (s == PRE) status.vBlank = false; break;
+            case             1:  addr = nt_addr();
+                                 if (s == PRE) {
+                                     status.vBlank = false;
+                                     CPU::set_nmi(false);  // Clear NMI line when VBlank ends
+                                 }
+                                 break;
             case 321: case 339:  addr = nt_addr(); break;
             // Nametable fetch instead of attribute:
             case           338:  nt = rd(addr); break;
