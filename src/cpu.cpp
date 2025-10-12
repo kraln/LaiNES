@@ -38,14 +38,33 @@ bool is_rmw_cycle = false;  // Track whether current cycle is part of a RMW inst
 // Remaining clocks to end frame:
 const int TOTAL_CYCLES = 29781;
 int remainingCycles;
-inline int elapsed() { return TOTAL_CYCLES - remainingCycles; }
+inline int elapsed_internal() { return TOTAL_CYCLES - remainingCycles; }
+int elapsed() { return elapsed_internal(); }  // Exposed version
 
 // Track if we already polled for interrupts this instruction (for special cases like RTI)
 bool interrupt_already_polled = false;
 
+// Track which of the 3 PPU steps (0, 1, 2) we're on within the current CPU cycle
+int ppu_sub_cycle = 0;
+
 /* Cycle emulation */
+// Single PPU step - used for interleaved timing
+inline void tick_single() {
+    PPU::step();
+    ppu_sub_cycle = (ppu_sub_cycle + 1) % 3;
+    // Decrement after 3rd PPU step (when wrapping back to 0) to match original batch timing
+    if (ppu_sub_cycle == 0) {
+        remainingCycles--;
+    }
+}
+
+// Full CPU cycle - 3 PPU steps
 #define T   tick()
-inline void tick() { PPU::step(); PPU::step(); PPU::step(); remainingCycles--; }
+inline void tick() {
+    tick_single();
+    tick_single();
+    tick_single();
+}
 
 /* Flags updating */
 inline void upd_cv(u8 x, u8 y, s16 r) { P[C] = (r>0xFF); P[V] = ~(x^y) & (x^r) & 0x80; }
@@ -68,13 +87,13 @@ template<bool wr> inline u8 access(u16 addr, u8 v = 0)
 
         // APU:
         case 0x4000 ... 0x4013:
-        case            0x4015:          result = APU::access<wr>(elapsed(), addr, wr ? v : data_bus, is_put_cycle); break;
-        case            0x4017:  if (wr) result = APU::access<wr>(elapsed(), addr, v, is_put_cycle);
+        case            0x4015:          result = APU::access<wr>(elapsed_internal(), addr, wr ? v : data_bus, is_put_cycle); break;
+        case            0x4017:  if (wr) result = APU::access<wr>(elapsed_internal(), addr, v, is_put_cycle);
                                  else result = (data_bus & 0xE0) | (Joypad::read_state(1) & 0x1F);  // Joypad 1, bits 5-7 open bus.
                                  break;
 
         case            0x4014:  if (wr) dma_oam(v); break;                          // OAM DMA.
-        case            0x4016:  if (wr) { Joypad::write_strobe(v & 1, elapsed(), is_put_cycle); break; }     // Joypad strobe.
+        case            0x4016:  if (wr) { Joypad::write_strobe(v & 1, elapsed_internal(), is_put_cycle); break; }     // Joypad strobe.
                                  else result = (data_bus & 0xE0) | (Joypad::read_state(0) & 0x1F);  // Joypad 0, bits 5-7 open bus.
                                  break;
         case 0x4018 ... 0x5FFF:  if (wr) result = v; else result = data_bus; break;  // Open bus - return current data_bus value
@@ -91,10 +110,75 @@ template<bool wr> inline u8 access(u16 addr, u8 v = 0)
     // Note: Reading from $4015 does NOT update the data bus
     return result;
 }
-inline u8  wr(u16 a, u8 v)      { T; is_put_cycle = true; u8 result = access<1>(a, v); is_put_cycle = false; return result; }
-inline u8  rd(u16 a)            { T; is_put_cycle = false; return access<0>(a);      }
+// Interleaved timing with per-register timing:
+// - PPU registers (0x2000-0x3FFF): sampled mid-cycle (after 2nd PPU step)
+// - APU registers (0x4000-0x4013, 0x4015, 0x4017): sampled end-of-cycle (after 3rd PPU step)
+// - Controller registers (0x4016): sampled end-of-cycle
+// - OAM DMA (0x4014): sampled mid-cycle (logically part of PPU)
+// - Other addresses: mid-cycle timing
+
+inline u8  wr(u16 a, u8 v) {
+    tick_single();  // 1st PPU step
+    tick_single();  // 2nd PPU step
+
+    // APU and controller registers need end-of-cycle timing (but NOT $4014 OAM DMA)
+    if (((a >= 0x4000 && a <= 0x4013) || a == 0x4015 || a == 0x4016 || a == 0x4017)) {
+        tick_single();  // 3rd PPU step
+        is_put_cycle = true;
+        u8 result = access<1>(a, v);  // Sample at end of cycle
+        is_put_cycle = false;
+        return result;
+    }
+
+    // PPU, OAM DMA, and other registers use mid-cycle timing
+    is_put_cycle = true;
+    u8 result = access<1>(a, v);
+    is_put_cycle = false;
+    tick_single();  // 3rd PPU step
+    return result;
+}
+
+inline u8  rd(u16 a) {
+    tick_single();  // 1st PPU step
+    tick_single();  // 2nd PPU step (VBlank gets set during this step)
+
+    // APU and controller registers need end-of-cycle timing (but NOT $4014 OAM DMA)
+    if (((a >= 0x4000 && a <= 0x4013) || a == 0x4015 || a == 0x4016 || a == 0x4017)) {
+        tick_single();  // 3rd PPU step
+        is_put_cycle = false;
+        return access<0>(a);  // Sample at end of cycle
+    }
+
+    // PPU, OAM DMA, and other registers use mid-cycle timing
+    is_put_cycle = false;
+    u8 result = access<0>(a);  // ppu_sub_cycle = 2
+    tick_single();  // 3rd PPU step
+    return result;
+}
+
 // Dummy read - doesn't update data bus
-inline u8  rd_dummy(u16 a)      { T; is_put_cycle = false; u8 old_bus = data_bus; u8 result = access<0>(a); data_bus = old_bus; return result; }
+inline u8  rd_dummy(u16 a) {
+    tick_single();  // 1st PPU step
+    tick_single();  // 2nd PPU step
+
+    // APU and controller registers need end-of-cycle timing (but NOT $4014 OAM DMA)
+    if (((a >= 0x4000 && a <= 0x4013) || a == 0x4015 || a == 0x4016 || a == 0x4017)) {
+        tick_single();  // 3rd PPU step
+        is_put_cycle = false;
+        u8 old_bus = data_bus;
+        u8 result = access<0>(a);
+        data_bus = old_bus;
+        return result;
+    }
+
+    // PPU, OAM DMA, and other registers use mid-cycle timing
+    is_put_cycle = false;
+    u8 old_bus = data_bus;
+    u8 result = access<0>(a);
+    data_bus = old_bus;
+    tick_single();  // 3rd PPU step
+    return result;
+}
 
 // Efficient bulk memory snapshot for debugging
 void snapshot_memory(u8* dest) {
@@ -384,12 +468,13 @@ template<Flag f, bool v> void br()
         if (cross(PC, j)) {
             rd((PC & 0xFF00) | ((PC + j) & 0xFF));  // Cycle 3: Dummy read on page cross
             // Poll before cycle 4 for page-crossing branches
+            bool apu_irq = APU::check_irq(elapsed_internal());
             if (nmi_latch) {
                 nmi_latch = false;  // Clear latch when servicing NMI
                 INT<NMI>();
                 return;
             }
-            else if (irq && !P[I]) { INT<IRQ>(); return; }
+            else if ((irq || apu_irq) && !P[I]) { INT<IRQ>(); return; }
         }
         T; PC += j;  // Cycle 3 (no cross) or 4 (page cross): Update PC
     }
@@ -409,11 +494,12 @@ void RTI() {
 
     // Poll for interrupts AFTER restoring PC and flags
     // The restored PC is the correct value to push if interrupt occurs
+    bool apu_irq = APU::check_irq(elapsed_internal());
     if (nmi_latch) {
         nmi_latch = false;  // Clear latch when servicing NMI
         INT<NMI>();
     }
-    else if (irq && !P[I]) INT<IRQ>();
+    else if ((irq || apu_irq) && !P[I]) INT<IRQ>();
 }
 
 template<Flag f, bool v> void flag() {
@@ -438,19 +524,23 @@ template<IntType t> void INT()
                           /*   NMI    Reset    IRQ     BRK  */
     constexpr u16 vect[] = { 0xFFFA, 0xFFFC, 0xFFFE, 0xFFFE };
 
-    // Vector fetch with NMI hijacking check
+    // Vector fetch with NMI hijacking during cycles 6-7
     u16 vector_addr = vect[t];
 
     // Check for NMI hijacking BEFORE vector fetch
     // This applies to BRK and IRQ (not NMI itself or RESET)
-    if ((t == BRK || t == IRQ) && nmi_latch) {
-        // NMI hijacks the interrupt - use NMI vector instead
+    // Check both pending and latch - if edge was detected but not promoted yet, still hijack
+    if ((t == BRK || t == IRQ) && (nmi_latch || nmi_pending)) {
+        // NMI hijacks the interrupt - use NMI vector for both bytes
         vector_addr = 0xFFFA;
-        nmi_latch = false;  // Clear NMI latch
+        nmi_latch = false;   // Clear NMI latch
+        nmi_pending = false; // Clear pending too if it was set
     }
 
-    // Cycles 6-7: Read interrupt vector
-    PC = rd16(vector_addr);
+    // Cycles 6-7: Read interrupt vector (from possibly hijacked address)
+    u8 pcl = rd(vector_addr);
+    u8 pch = rd(vector_addr + 1);
+    PC = (pch << 8) | pcl;
 
     // For normal NMI, latch is already cleared in polling code
 }
@@ -464,13 +554,16 @@ void exec()
     // General interrupt polling: happens after cycle 1 (reading opcode), before cycle 2.
     // Special instructions (RTI) may override this by setting interrupt_already_polled.
     if (!interrupt_already_polled) {
+        // Check if APU IRQ is active (time may have passed since last check)
+        bool apu_irq = APU::check_irq(elapsed_internal());
+
         if (nmi_latch) {
             PC--;  // Point back to the thrown-away opcode
             nmi_latch = false;  // Clear latch when servicing NMI
             INT<NMI>();
             return;
         }
-        else if (irq && !P[I]) {
+        else if ((irq || apu_irq) && !P[I]) {
             PC--;  // Point back to the thrown-away opcode
             INT<IRQ>();
             return;
@@ -649,6 +742,8 @@ void set_nmi(bool v) {
 
 void set_irq(bool v) { irq = v; }
 
+int get_ppu_sub_cycle() { return ppu_sub_cycle; }
+
 int dmc_read(void*, cpu_addr_t addr) { return access<0>(addr); }
 
 /* Turn on the CPU */
@@ -662,6 +757,7 @@ void power()
 
     nmi_line = nmi_pending = nmi_latch = nmi_previous = false;
     irq = false;
+    ppu_sub_cycle = 0;
     INT<RESET>();
 }
 
@@ -677,7 +773,7 @@ void run_frame()
         exec();
     }
 
-    APU::run_frame(elapsed());
+    APU::run_frame(elapsed_internal());
 }
 
 

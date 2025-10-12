@@ -24,7 +24,9 @@ class Flags
 
 void set_nmi(bool v = true);
 void set_irq(bool v = true);
+int get_ppu_sub_cycle();
 int dmc_read(void*, cpu_addr_t addr);
+int elapsed();  // Get current CPU cycle count in frame
 void power();
 void run_frame();
 

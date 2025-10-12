@@ -98,17 +98,10 @@ template <bool write> u8 access(u16 index, u8 v, bool rmw)
         {
             case 0:  // PPUCTRL   ($2000).
                 if (warmupCycles <= 0) {
-                    bool old_nmi_enable = ctrl.nmi;
                     ctrl.r = v;
                     tAddr.nt = ctrl.nt;
-                    // Edge detection: if enabling NMI (0→1) and VBlank flag is set, trigger NMI
-                    if (!old_nmi_enable && ctrl.nmi && status.vBlank) {
-                        CPU::set_nmi(true);
-                    }
-                    // If disabling NMI, clear the line
-                    else if (old_nmi_enable && !ctrl.nmi) {
-                        CPU::set_nmi(false);
-                    }
+                    // Always update NMI line to reflect ctrl.nmi && status.vBlank
+                    CPU::set_nmi(ctrl.nmi && status.vBlank);
                 }
                 break;
             case 1:  // PPUMASK   ($2001).
@@ -170,12 +163,17 @@ template <bool write> u8 access(u16 index, u8 v, bool rmw)
                 v = (openBus & 0x1F) | status.r;  // Bits 4-0 from open bus, 7-5 from status
                 openBus = v;  // Reading $2002 updates open bus
                 // Check if we're reading $2002 on the exact cycle VBlank would be set
-                if (scanline == 241 && dot == 1) {
-                    vBlankSuppressed = true;  // Suppress VBlank flag setting
+                // VBlank is set at scanline 241, dot 1
+                // With mid-cycle timing: after 2 PPU steps, dot has been incremented to 2
+                // So we check for dot 0, 1, or 2 depending on CPU/PPU alignment
+                if (scanline == 241 && (dot <= 2)) {
+                    // Reading during dots 0-2 can suppress VBlank depending on exact timing
+                    // For mid-cycle timing (ppu_sub_cycle==2), dot==2 means VBlank just set
+                    vBlankSuppressed = true;  // Suppress VBlank flag setting (race condition)
                 }
                 status.vBlank = 0; latch = 0;
-                // Clear NMI line since VBlank flag is now cleared
-                CPU::set_nmi(false);
+                // Update NMI line: VBlank cleared, so line = ctrl.nmi && false = false
+                CPU::set_nmi(ctrl.nmi && status.vBlank);
                 break;
             case 3:  // OAMADDR is write-only, return PPU open bus
                 v = openBus;
@@ -412,7 +410,8 @@ template<Scanline s> void scanline_cycle()
     if (s == NMI and dot == 1) {
         if (!vBlankSuppressed) {
             status.vBlank = true;
-            if (ctrl.nmi) CPU::set_nmi(true);  // Set NMI line when VBlank starts and NMI enabled
+            // Update NMI line to reflect ctrl.nmi && status.vBlank
+            CPU::set_nmi(ctrl.nmi && status.vBlank);
         }
         vBlankSuppressed = false;  // Clear suppression flag after the critical cycle
     }
@@ -455,7 +454,8 @@ template<Scanline s> void scanline_cycle()
             case             1:  addr = nt_addr();
                                  if (s == PRE) {
                                      status.vBlank = false;
-                                     CPU::set_nmi(false);  // Clear NMI line when VBlank ends
+                                     // Update NMI line: VBlank cleared, so line = ctrl.nmi && false = false
+                                     CPU::set_nmi(ctrl.nmi && status.vBlank);
                                  }
                                  break;
             case 321: case 339:  addr = nt_addr(); break;

@@ -11,6 +11,13 @@ Blip_Buffer buf;
 const int OUT_SIZE = 4096;
 blip_sample_t outBuf[OUT_SIZE];
 
+// IRQ callback - called when APU IRQ state changes
+// This is called whenever earliest_irq_ changes in the APU
+void apu_irq_changed(void*)
+{
+    // Callback exists but we don't use it - we check IRQ state during polling instead
+    // This is because IRQ state depends on current time, which changes between callbacks
+}
 
 void init()
 {
@@ -19,6 +26,7 @@ void init()
 
     apu.output(&buf);
     apu.dmc_reader(CPU::dmc_read);
+    apu.irq_notifier(apu_irq_changed);
 }
 
 void reset()
@@ -54,6 +62,21 @@ void run_frame(int elapsed)
     // During fast forward, clear the buffer to prevent buildup
     if (GUI::is_fast_forward() && buf.samples_avail() > 0)
         buf.clear();
+}
+
+// Check if APU IRQ should be active at the given time
+bool check_irq(int elapsed)
+{
+    // Run APU up to current time so it can set IRQ flags
+    apu.run_until(elapsed);
+
+    cpu_time_t irq_time = apu.earliest_irq();
+
+    // IRQ is active if:
+    // - irq_waiting (0): IRQ should fire immediately
+    // - Any value <= current time: IRQ time has passed
+    return (irq_time == Nes_Apu::irq_waiting) ||
+           (irq_time != Nes_Apu::no_irq && irq_time <= elapsed);
 }
 
 
