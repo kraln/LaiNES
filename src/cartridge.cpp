@@ -24,6 +24,7 @@ namespace Cartridge {
 
 Mapper* mapper = nullptr;  // Mapper chip.
 std::string currentRomPath;  // Path to currently loaded ROM
+u8 currentMapperId = 0;  // Current mapper ID
 
 /* PRG-ROM access */
 template <bool wr> u8 access(u16 addr, u8 v)
@@ -72,6 +73,7 @@ void load(const char* fileName)
     fclose(f);
 
     int mapperNum = (rom[7] & 0xF0) | (rom[6] >> 4);
+    currentMapperId = mapperNum;  // Store mapper ID
     if (loaded())
     {
         delete mapper;
@@ -143,6 +145,21 @@ bool check_mapper_irq(int elapsed)
     if (mapper)
         return mapper->check_irq(elapsed);
     return false;
+}
+
+std::string get_rom_path()
+{
+    return currentRomPath;
+}
+
+u8 get_mapper_id()
+{
+    return currentMapperId;
+}
+
+Mapper* get_mapper()
+{
+    return mapper;
 }
 
 bool handles_expansion_addr(u16 addr)

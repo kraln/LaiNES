@@ -100,10 +100,26 @@ extern int scanline;     // Current scanline
 extern int dot;          // Current dot/cycle within scanline
 extern Ctrl ctrl;        // PPUCTRL register (for sprite size, pattern tables)
 extern Mask mask;        // PPUMASK register (for rendering enabled check)
+extern Status status;    // PPUSTATUS register
 extern Mirroring mirroring;  // Current mirroring mode
 
 // Nametable mirroring function (for mappers to use)
 u16 nt_mirror(u16 addr);
+
+// Save state support - get/set PPU internal registers
+struct PpuState {
+    u16 vram_addr;      // vAddr.r
+    u16 temp_addr;      // tAddr.r
+    u8 fine_x;          // fX
+    u8 oam_addr;        // oamAddr
+    u8 read_buffer;     // readBuffer
+    u8 open_bus;        // openBus
+    bool write_latch;   // latch
+    bool frame_odd;     // frameOdd
+};
+
+void get_state(PpuState& state);
+void set_state(const PpuState& state);
 
 
 }

@@ -49,4 +49,65 @@ class Mapper24 : public Mapper
 
     // IRQ support
     bool check_irq(int elapsed) override;
+
+    // Save state support
+    u32 get_state_size() const override {
+        return sizeof(vrc6_snapshot_t) + sizeof(prg_bank_16k) + sizeof(prg_bank_8k) +
+               sizeof(chr_banks) + sizeof(irq_latch) + sizeof(irq_counter) +
+               sizeof(irq_enabled) + sizeof(irq_mode) + sizeof(irq_enable_after_ack) +
+               sizeof(irq_active) + sizeof(last_cpu_cycle);
+    }
+
+    void save_state(u8* buffer) const override {
+        int offset = 0;
+
+        // Save VRC6 audio state
+        vrc6_snapshot_t vrc6_state;
+        vrc6.save_snapshot(&vrc6_state);
+        memcpy(buffer + offset, &vrc6_state, sizeof(vrc6_state));
+        offset += sizeof(vrc6_state);
+
+        // Save banking state
+        buffer[offset++] = prg_bank_16k;
+        buffer[offset++] = prg_bank_8k;
+        memcpy(buffer + offset, chr_banks, sizeof(chr_banks));
+        offset += sizeof(chr_banks);
+
+        // Save IRQ state
+        buffer[offset++] = irq_latch;
+        buffer[offset++] = irq_counter;
+        buffer[offset++] = irq_enabled ? 1 : 0;
+        buffer[offset++] = irq_mode ? 1 : 0;
+        buffer[offset++] = irq_enable_after_ack ? 1 : 0;
+        buffer[offset++] = irq_active ? 1 : 0;
+        memcpy(buffer + offset, &last_cpu_cycle, sizeof(last_cpu_cycle));
+    }
+
+    void load_state(const u8* buffer) override {
+        int offset = 0;
+
+        // Load VRC6 audio state
+        vrc6_snapshot_t vrc6_state;
+        memcpy(&vrc6_state, buffer + offset, sizeof(vrc6_state));
+        vrc6.load_snapshot(vrc6_state);
+        offset += sizeof(vrc6_state);
+
+        // Load banking state
+        prg_bank_16k = buffer[offset++];
+        prg_bank_8k = buffer[offset++];
+        memcpy(chr_banks, buffer + offset, sizeof(chr_banks));
+        offset += sizeof(chr_banks);
+
+        // Load IRQ state
+        irq_latch = buffer[offset++];
+        irq_counter = buffer[offset++];
+        irq_enabled = buffer[offset++] != 0;
+        irq_mode = buffer[offset++] != 0;
+        irq_enable_after_ack = buffer[offset++] != 0;
+        irq_active = buffer[offset++] != 0;
+        memcpy(&last_cpu_cycle, buffer + offset, sizeof(last_cpu_cycle));
+
+        apply_prg_banks();
+        apply_chr_banks();
+    }
 };

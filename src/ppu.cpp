@@ -539,5 +539,27 @@ void reset()
     }
 }
 
+void get_state(PpuState& state) {
+    state.vram_addr = vAddr.r;
+    state.temp_addr = tAddr.r;
+    state.fine_x = fX;
+    state.oam_addr = oamAddr;
+    state.read_buffer = readBuffer;
+    state.open_bus = openBus;
+    state.write_latch = latch;
+    state.frame_odd = frameOdd;
+}
+
+void set_state(const PpuState& state) {
+    vAddr.r = state.vram_addr;
+    tAddr.r = state.temp_addr;
+    fX = state.fine_x;
+    oamAddr = state.oam_addr;
+    readBuffer = state.read_buffer;
+    openBus = state.open_bus;
+    latch = state.write_latch;
+    frameOdd = state.frame_odd;
+}
+
 
 }

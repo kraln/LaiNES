@@ -52,6 +52,9 @@ The main menu includes a **Reset** option to reload and restart the current ROM 
 - **ESC**: Toggle between gameplay and menu
 - **Tab** (hold): Fast forward mode (8x speed, indicated by ">>" in top-right corner)
 
+### Savestate Support
+LaiNES includes savestate functionality accessible through the main menu (**Save State** and **Load State** options). Savestates preserve the complete emulator state including CPU, PPU, APU, mapper state, and expansion audio. Savestates are automatically stored per-ROM and can be loaded at any time.
+
 LaiNES can be run directly from the command line:
 ```sh
 ./laines path/to/rom.nes         # Run a specific ROM
@@ -129,7 +132,15 @@ void exec()
 * If you're experiencing audio issues on Linux, try typing `export SDL_AUDIODRIVER=ALSA` before running the emulator.
 
 ## Contributors
-* [Jeff Katz](https://github.com/kraln) - Mappers 002, 003, 005, 007, 009, 010, 011, 024, 034, 066, configuration saving, unofficial opcodes, accuracy improvements, shared memory debugging, expansion audio support, various usability fixes.
+* [Jeff Katz](https://github.com/kraln) - Major enhancements including:
+  - Additional mapper support: MMC5 (005), VRC6 (024), MMC2/MMC4 (009/010), and mappers 002, 003, 007, 011, 034, 066
+  - VRC6 expansion audio support
+  - Savestate system with full mapper/audio state preservation
+  - Comprehensive accuracy improvements: CPU timing, PPU sprite overflow, APU IRQ, DMA timing, NMI timing
+  - Complete unofficial 6502 opcode support
+  - Shared memory debugging interface
+  - Fast forward mode and enhanced menu navigation
+  - Configuration saving system
 * [PudgeMa](https://github.com/PudgeMa) - Scrollable menu and bug fixes.
 * [tyfkda](https://github.com/tyfkda) - Show error message instead of segfault for unsupported mappers.
 

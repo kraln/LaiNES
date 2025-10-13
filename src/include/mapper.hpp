@@ -43,4 +43,18 @@ class Mapper
     virtual bool check_irq(int elapsed) { return false; }
     virtual void ppu_read_hook(u16 addr) {}
     virtual void ppu_write_hook(u16 index, u8 v) {}  // Hook for PPU register writes ($2000-$2007)
+
+    // Save state support
+    // Returns size of mapper-specific state data (in bytes)
+    virtual u32 get_state_size() const { return 0; }
+    // Write mapper-specific state to buffer (PRG RAM and CHR RAM are handled separately)
+    virtual void save_state(u8* buffer) const {}
+    // Load mapper-specific state from buffer
+    virtual void load_state(const u8* buffer) {}
+
+    // Accessors for save state system
+    u32 get_prg_ram_size() const { return prgRamSize; }
+    u32 get_chr_ram_size() const { return chrRam ? chrSize : 0; }
+    u8* get_prg_ram() { return prgRam; }
+    u8* get_chr_ram() { return chrRam ? chr : nullptr; }
 };

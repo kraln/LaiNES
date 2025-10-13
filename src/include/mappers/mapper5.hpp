@@ -174,4 +174,107 @@ class Mapper5 : public Mapper
 
     // IRQ support
     bool check_irq(int elapsed) override;
+
+    // Save state support
+    u32 get_state_size() const override {
+        return sizeof(prgMode) + sizeof(chrMode) + sizeof(prgRamProtect1) + sizeof(prgRamProtect2) +
+               sizeof(exRamMode) + sizeof(ntMapping) + sizeof(fillTile) + sizeof(fillAttr) +
+               sizeof(prgBanks) + sizeof(prgIsRam) + sizeof(chrBanks) + sizeof(chrRegHigh) +
+               sizeof(ab_mode) + sizeof(splitMode) + sizeof(splitScroll) + sizeof(splitBank) +
+               sizeof(irqScanline) + sizeof(irqStatus) + sizeof(irqEnabled) + sizeof(irqCounter) +
+               sizeof(inFrame) + sizeof(lastReadAddr) + sizeof(sameAddrCount) + sizeof(splitTileCount) +
+               sizeof(splitActive) + sizeof(splitSide) + sizeof(multiplicand) + sizeof(multiplier) +
+               sizeof(exRam) + sizeof(fetchingSprite) + sizeof(fetchCount) + sizeof(lastScanline) +
+               sizeof(u8) + sizeof(lastNTAddr);  // fetchState as u8
+    }
+
+    void save_state(u8* buffer) const override {
+        int offset = 0;
+        buffer[offset++] = prgMode;
+        buffer[offset++] = chrMode;
+        buffer[offset++] = prgRamProtect1;
+        buffer[offset++] = prgRamProtect2;
+        buffer[offset++] = exRamMode;
+        buffer[offset++] = ntMapping;
+        buffer[offset++] = fillTile;
+        buffer[offset++] = fillAttr;
+        memcpy(buffer + offset, prgBanks, sizeof(prgBanks));
+        offset += sizeof(prgBanks);
+        memcpy(buffer + offset, prgIsRam, sizeof(prgIsRam));
+        offset += sizeof(prgIsRam);
+        memcpy(buffer + offset, chrBanks, sizeof(chrBanks));
+        offset += sizeof(chrBanks);
+        buffer[offset++] = chrRegHigh;
+        buffer[offset++] = ab_mode;
+        buffer[offset++] = splitMode;
+        buffer[offset++] = splitScroll;
+        buffer[offset++] = splitBank;
+        buffer[offset++] = irqScanline;
+        buffer[offset++] = irqStatus;
+        buffer[offset++] = irqEnabled ? 1 : 0;
+        buffer[offset++] = irqCounter;
+        buffer[offset++] = inFrame ? 1 : 0;
+        memcpy(buffer + offset, &lastReadAddr, sizeof(lastReadAddr));
+        offset += sizeof(lastReadAddr);
+        buffer[offset++] = sameAddrCount;
+        buffer[offset++] = splitTileCount;
+        buffer[offset++] = splitActive ? 1 : 0;
+        buffer[offset++] = splitSide;
+        buffer[offset++] = multiplicand;
+        buffer[offset++] = multiplier;
+        memcpy(buffer + offset, exRam, sizeof(exRam));
+        offset += sizeof(exRam);
+        buffer[offset++] = fetchingSprite ? 1 : 0;
+        buffer[offset++] = fetchCount;
+        memcpy(buffer + offset, &lastScanline, sizeof(lastScanline));
+        offset += sizeof(lastScanline);
+        buffer[offset++] = (u8)fetchState;
+        memcpy(buffer + offset, &lastNTAddr, sizeof(lastNTAddr));
+    }
+
+    void load_state(const u8* buffer) override {
+        int offset = 0;
+        prgMode = buffer[offset++];
+        chrMode = buffer[offset++];
+        prgRamProtect1 = buffer[offset++];
+        prgRamProtect2 = buffer[offset++];
+        exRamMode = buffer[offset++];
+        ntMapping = buffer[offset++];
+        fillTile = buffer[offset++];
+        fillAttr = buffer[offset++];
+        memcpy(prgBanks, buffer + offset, sizeof(prgBanks));
+        offset += sizeof(prgBanks);
+        memcpy(prgIsRam, buffer + offset, sizeof(prgIsRam));
+        offset += sizeof(prgIsRam);
+        memcpy(chrBanks, buffer + offset, sizeof(chrBanks));
+        offset += sizeof(chrBanks);
+        chrRegHigh = buffer[offset++];
+        ab_mode = buffer[offset++];
+        splitMode = buffer[offset++];
+        splitScroll = buffer[offset++];
+        splitBank = buffer[offset++];
+        irqScanline = buffer[offset++];
+        irqStatus = buffer[offset++];
+        irqEnabled = buffer[offset++] != 0;
+        irqCounter = buffer[offset++];
+        inFrame = buffer[offset++] != 0;
+        memcpy(&lastReadAddr, buffer + offset, sizeof(lastReadAddr));
+        offset += sizeof(lastReadAddr);
+        sameAddrCount = buffer[offset++];
+        splitTileCount = buffer[offset++];
+        splitActive = buffer[offset++] != 0;
+        splitSide = buffer[offset++];
+        multiplicand = buffer[offset++];
+        multiplier = buffer[offset++];
+        memcpy(exRam, buffer + offset, sizeof(exRam));
+        offset += sizeof(exRam);
+        fetchingSprite = buffer[offset++] != 0;
+        fetchCount = buffer[offset++];
+        memcpy(&lastScanline, buffer + offset, sizeof(lastScanline));
+        offset += sizeof(lastScanline);
+        fetchState = (FetchState)buffer[offset++];
+        memcpy(&lastNTAddr, buffer + offset, sizeof(lastNTAddr));
+        apply_prg_banking();
+        apply_chr_banking();
+    }
 };

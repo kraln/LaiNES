@@ -104,5 +104,11 @@ Blip_Buffer& get_buffer()
     return buf;
 }
 
+// Get APU object for save state access
+Nes_Apu& get_apu()
+{
+    return apu;
+}
+
 
 }
