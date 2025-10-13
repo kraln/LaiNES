@@ -47,6 +47,38 @@ class ControlEntry : public Entry
     void render(int x, int y) { Entry::render(x, y); keyEntry->render(TEXT_RIGHT, y); }
 };
 
+class CycleEntry : public Entry
+{
+    int* value;
+    int min_val;
+    int max_val;
+    std::string prefix;
+    std::string suffix;
+    std::function<void(int)> on_change;
+
+    void cycle();
+    void update_label();
+
+  public:
+    CycleEntry(std::string prefix, int* value, int min_val, int max_val,
+               std::function<void(int)> on_change, std::string suffix = "x",
+               std::function<bool()> enabled_check = []{ return true; });
+};
+
+class ToggleEntry : public Entry
+{
+    bool* value;
+    std::string prefix;
+    std::function<void(bool)> on_change;
+
+    void toggle();
+    void update_label();
+
+  public:
+    ToggleEntry(std::string prefix, bool* value, std::function<void(bool)> on_change,
+                std::function<bool()> enabled_check = []{ return true; });
+};
+
 class Menu
 {
   protected:

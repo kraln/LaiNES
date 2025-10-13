@@ -18,6 +18,9 @@ void save_settings();
 const char* get_config_path(char * buf, int buflen);
 
 extern int last_window_size;
+extern bool fullscreen_mode;
+extern bool scaling_mode;  // false = nearest (sharp), true = linear (smooth)
+extern bool stretch_aspect;
 extern SDL_Scancode KEY_A     [];
 extern SDL_Scancode KEY_B     [];
 extern SDL_Scancode KEY_SELECT[];

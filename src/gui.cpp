@@ -44,12 +44,77 @@ void set_size(int mul)
     SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 }
 
+/* Toggle fullscreen mode */
+void set_fullscreen(bool enabled)
+{
+    fullscreen_mode = enabled;
+    SDL_SetWindowFullscreen(window, enabled ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+}
+
+/* Set scaling/filtering mode */
+void set_scaling_mode(bool smooth)
+{
+    scaling_mode = smooth;
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, smooth ? "1" : "0");
+
+    // Recreate game texture for the hint to take effect
+    SDL_DestroyTexture(gameTexture);
+    gameTexture = SDL_CreateTexture(renderer,
+                                    SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                    WIDTH, HEIGHT);
+
+    // Recreate background texture
+    SDL_DestroyTexture(background);
+    SDL_Surface* backSurface = IMG_Load("res/init.png");
+    background = SDL_CreateTextureFromSurface(renderer, backSurface);
+    SDL_SetTextureColorMod(background, 60, 60, 60);
+    SDL_FreeSurface(backSurface);
+
+    // Recreate all menu entry textures
+    auto recreate_menu = [](Menu* m) {
+        if (m) {
+            for (auto entry : m->entries) {
+                entry->set_label(entry->get_label());
+            }
+        }
+    };
+
+    recreate_menu(mainMenu);
+    recreate_menu(settingsMenu);
+    recreate_menu(videoMenu);
+    recreate_menu(keyboardMenu[0]);
+    recreate_menu(keyboardMenu[1]);
+    if (joystick[0]) recreate_menu(joystickMenu[0]);
+    if (joystick[1]) recreate_menu(joystickMenu[1]);
+    recreate_menu(fileMenu);
+}
+
+/* Toggle aspect ratio stretching */
+void set_aspect_stretch(bool enabled)
+{
+    stretch_aspect = enabled;
+    // Only applies in fullscreen mode
+    if (fullscreen_mode)
+    {
+        if (enabled)
+        {
+            // Disable logical size to stretch to fill screen
+            SDL_RenderSetLogicalSize(renderer, 0, 0);
+        }
+        else
+        {
+            // Enable logical size for letterboxing
+            SDL_RenderSetLogicalSize(renderer, WIDTH, HEIGHT);
+        }
+    }
+}
+
 /* Initialize GUI */
 void init()
 {
     // Initialize graphics system:
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK);
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, scaling_mode ? "1" : "0");
     TTF_Init();
 
     for (int i = 0; i < SDL_NumJoysticks(); i++)
@@ -71,6 +136,15 @@ void init()
     gameTexture = SDL_CreateTexture (renderer,
                                      SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                      WIDTH, HEIGHT);
+
+    // Apply saved video settings
+    if (fullscreen_mode)
+    {
+        SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        // Apply stretch if enabled in fullscreen
+        if (stretch_aspect)
+            SDL_RenderSetLogicalSize(renderer, 0, 0);
+    }
 
     font = TTF_OpenFont("res/font.ttf", FONT_SZ);
     keys = SDL_GetKeyboardState(0);
@@ -111,10 +185,10 @@ void init()
 
     videoMenu = new Menu;
     videoMenu->add(new Entry("<",       []{ menu = settingsMenu; }));
-    videoMenu->add(new Entry("Size 1x", []{ set_size(1); }));
-    videoMenu->add(new Entry("Size 2x", []{ set_size(2); }));
-    videoMenu->add(new Entry("Size 3x", []{ set_size(3); }));
-    videoMenu->add(new Entry("Size 4x", []{ set_size(4); }));
+    videoMenu->add(new CycleEntry("Size: ", &last_window_size, 1, 6, [](int v){ set_size(v); }, "x", []{ return !fullscreen_mode; }));
+    videoMenu->add(new ToggleEntry("Fullscreen: ", &fullscreen_mode, [](bool v){ set_fullscreen(v); }));
+    videoMenu->add(new ToggleEntry("Smooth Scaling: ", &scaling_mode, [](bool v){ set_scaling_mode(v); }));
+    videoMenu->add(new ToggleEntry("Stretch Aspect: ", &stretch_aspect, [](bool v){ set_aspect_stretch(v); }, []{ return fullscreen_mode; }));
 
     for (int i = 0; i < 2; i++)
     {
@@ -261,7 +335,20 @@ void render()
         SDL_RenderCopy(renderer, background, NULL, NULL);
 
     // Draw the menu:
-    if (pause) menu->render();
+    if (pause) {
+        // If stretch aspect is enabled, temporarily restore logical sizing
+        // so the menu scales properly
+        if (fullscreen_mode && stretch_aspect) {
+            SDL_RenderSetLogicalSize(renderer, WIDTH, HEIGHT);
+        }
+
+        menu->render();
+
+        // Restore stretch mode if it was enabled
+        if (fullscreen_mode && stretch_aspect) {
+            SDL_RenderSetLogicalSize(renderer, 0, 0);
+        }
+    }
 
     // Draw fast forward indicator:
     if (fast_forward && !pause) {

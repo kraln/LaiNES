@@ -60,6 +60,49 @@ ControlEntry::ControlEntry(string action, int* button) : button(button),
     this->keyEntry = new Entry(to_string(*button), []{});
 }
 
+CycleEntry::CycleEntry(string prefix, int* value, int min_val, int max_val,
+                       function<void(int)> on_change, string suffix,
+                       function<bool()> enabled_check)
+    : Entry("", [this]{ cycle(); }, enabled_check),
+      value(value), min_val(min_val), max_val(max_val),
+      prefix(prefix), suffix(suffix), on_change(on_change)
+{
+    update_label();
+}
+
+void CycleEntry::cycle()
+{
+    (*value)++;
+    if (*value > max_val) *value = min_val;
+    on_change(*value);
+    update_label();
+}
+
+void CycleEntry::update_label()
+{
+    set_label(prefix + to_string(*value) + suffix);
+}
+
+ToggleEntry::ToggleEntry(string prefix, bool* value, function<void(bool)> on_change,
+                         function<bool()> enabled_check)
+    : Entry("", [this]{ toggle(); }, enabled_check),
+      value(value), prefix(prefix), on_change(on_change)
+{
+    update_label();
+}
+
+void ToggleEntry::toggle()
+{
+    *value = !(*value);
+    on_change(*value);
+    update_label();
+}
+
+void ToggleEntry::update_label()
+{
+    set_label(prefix + (*value ? "On" : "Off"));
+}
+
 
 void Menu::add(Entry* entry)
 {

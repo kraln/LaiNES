@@ -10,6 +10,9 @@ CSimpleIniA ini(true, false, false);
 
 /* Window settings */
 int last_window_size = 1;
+bool fullscreen_mode = false;
+bool scaling_mode = true;  // true = linear (smooth), false = nearest (sharp)
+bool stretch_aspect = false;
 
 /* Controls settings */
 SDL_Scancode KEY_A     [] = { SDL_SCANCODE_A,      SDL_SCANCODE_ESCAPE };
@@ -79,10 +82,13 @@ void load_settings()
 
     /* Screen settings */
     int screen_size = atoi(ini.GetValue("screen", "size", "1"));
-    if (screen_size < 1 || screen_size > 4)
+    if (screen_size < 1 || screen_size > 6)
         screen_size = 1;
 
-    set_size(screen_size);
+    last_window_size = screen_size;
+    fullscreen_mode = (ini.GetValue("screen", "fullscreen", "no"))[0] == 'y';
+    scaling_mode = (ini.GetValue("screen", "smooth", "yes"))[0] == 'y';
+    stretch_aspect = (ini.GetValue("screen", "stretch", "no"))[0] == 'y';
 
     /* Control settings */
     for (int p = 0; p <= 1; p++)
@@ -123,6 +129,9 @@ void save_settings()
     char buf[10];
     sprintf(buf, "%d", last_window_size);
     ini.SetValue("screen", "size", buf);
+    ini.SetValue("screen", "fullscreen", fullscreen_mode ? "yes" : "no");
+    ini.SetValue("screen", "smooth", scaling_mode ? "yes" : "no");
+    ini.SetValue("screen", "stretch", stretch_aspect ? "yes" : "no");
 
     /* Control settings */
     for (int p = 0; p < 2; p++)
