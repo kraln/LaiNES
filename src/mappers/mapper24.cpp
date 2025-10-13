@@ -20,6 +20,7 @@ Mapper24::Mapper24(u8* rom, bool vrc6b) : Mapper(rom), is_vrc6b(vrc6b)
     irq_enable_after_ack = false;
     irq_active = false;
     last_cpu_cycle = 0;
+    irq_prescaler = 341;  // Start prescaler at 341 (simulates 341 PPU dots = ~113.67 CPU cycles)
 
     // Set up initial PRG banking
     // $8000-$BFFF: 16K switchable
@@ -98,20 +99,8 @@ u8 Mapper24::chr_read(u16 addr)
 
 u8 Mapper24::write(u16 addr, u8 v)
 {
-    // Get current CPU cycle time for IRQ and audio
+    // Get current CPU cycle time for audio
     cpu_time_t elapsed = CPU::elapsed();
-
-    // Cycle mode: Process IRQ up to current time before handling the write
-    // (like quickerNES run_until() before write)
-    if (irq_enabled && irq_mode && elapsed > last_cpu_cycle)
-    {
-        int cycles_to_process = elapsed - last_cpu_cycle;
-        for (int i = 0; i < cycles_to_process; i++)
-        {
-            clock_irq();
-        }
-        last_cpu_cycle = elapsed;
-    }
 
     if (addr < 0x8000)
     {
@@ -207,6 +196,7 @@ u8 Mapper24::write(u16 addr, u8 v)
             if (irq_enabled)
             {
                 irq_counter = irq_latch;
+                irq_prescaler = 341;  // Reset prescaler when IRQ enabled
             }
             irq_active = false;
             CPU::set_irq(false);
@@ -225,30 +215,16 @@ u8 Mapper24::write(u16 addr, u8 v)
 
 void Mapper24::signal_scanline(int scanline)
 {
-    // VRC6 IRQ runs on all scanlines
-
-    // Scanline mode: clock IRQ counter once per scanline
-    if (irq_enabled && !irq_mode)
-    {
-        clock_irq();
-    }
+    // VRC6 IRQ is CPU-cycle based in both modes, not PPU scanline-based
+    // Scanline mode uses a prescaler that's processed in check_irq()
+    // This function is not used for VRC6 IRQ timing
 }
 
 void Mapper24::run_audio(int elapsed)
 {
-    // Cycle mode: process any remaining IRQ cycles
-    if (irq_enabled && irq_mode && elapsed > last_cpu_cycle)
-    {
-        int cycles_to_process = elapsed - last_cpu_cycle;
-        for (int i = 0; i < cycles_to_process; i++)
-        {
-            clock_irq();
-        }
-        last_cpu_cycle = elapsed;
-    }
-
-    // Note: VRC6 audio is generated via write_osc() calls during the frame,
+    // VRC6 audio is generated via write_osc() calls during the frame,
     // and end_frame() will catch up any remaining cycles
+    // IRQ processing is handled in check_irq()
 }
 
 void Mapper24::end_audio_frame(int elapsed)
@@ -262,16 +238,40 @@ void Mapper24::end_audio_frame(int elapsed)
 
 bool Mapper24::check_irq(int elapsed)
 {
-    // Process IRQ cycles up to current time (cycle mode only)
-    // Scanline mode is handled by signal_scanline()
-    if (irq_enabled && irq_mode && elapsed > last_cpu_cycle)
+    if (elapsed <= last_cpu_cycle)
     {
-        int cycles_to_process = elapsed - last_cpu_cycle;
+        return irq_active;
+    }
+
+    int cycles_to_process = elapsed - last_cpu_cycle;
+    last_cpu_cycle = elapsed;
+
+    if (!irq_enabled)
+    {
+        return irq_active;
+    }
+
+    if (irq_mode)
+    {
+        // Cycle mode: clock IRQ counter every CPU cycle
         for (int i = 0; i < cycles_to_process; i++)
         {
             clock_irq();
         }
-        last_cpu_cycle = elapsed;
+    }
+    else
+    {
+        // Scanline mode: use prescaler to divide CPU cycles by ~113.67
+        // Pattern: start at 341, subtract 3 per CPU cycle, when ≤0 add 341 and clock
+        for (int i = 0; i < cycles_to_process; i++)
+        {
+            irq_prescaler -= 3;
+            if (irq_prescaler <= 0)
+            {
+                irq_prescaler += 341;
+                clock_irq();
+            }
+        }
     }
 
     // Return whether IRQ line is currently asserted

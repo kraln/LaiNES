@@ -533,12 +533,13 @@ template<Flag f, bool v> void br()
             rd((PC & 0xFF00) | ((PC + j) & 0xFF));  // Cycle 3: Dummy read on page cross
             // Poll before cycle 4 for page-crossing branches
             bool apu_irq = APU::check_irq(elapsed_internal());
+            bool mapper_irq = Cartridge::check_mapper_irq(elapsed_internal());
             if (nmi_latch) {
                 nmi_latch = false;  // Clear latch when servicing NMI
                 INT<NMI>();
                 return;
             }
-            else if ((irq || apu_irq) && !P[I]) { INT<IRQ>(); return; }
+            else if ((irq || apu_irq || mapper_irq) && !P[I]) { INT<IRQ>(); return; }
         }
         T; PC += j;  // Cycle 3 (no cross) or 4 (page cross): Update PC
     }
@@ -559,11 +560,12 @@ void RTI() {
     // Poll for interrupts AFTER restoring PC and flags
     // The restored PC is the correct value to push if interrupt occurs
     bool apu_irq = APU::check_irq(elapsed_internal());
+    bool mapper_irq = Cartridge::check_mapper_irq(elapsed_internal());
     if (nmi_latch) {
         nmi_latch = false;  // Clear latch when servicing NMI
         INT<NMI>();
     }
-    else if ((irq || apu_irq) && !P[I]) INT<IRQ>();
+    else if ((irq || apu_irq || mapper_irq) && !P[I]) INT<IRQ>();
 }
 
 template<Flag f, bool v> void flag() {
@@ -618,8 +620,9 @@ void exec()
     // General interrupt polling: happens after cycle 1 (reading opcode), before cycle 2.
     // Special instructions (RTI) may override this by setting interrupt_already_polled.
     if (!interrupt_already_polled) {
-        // Check if APU IRQ is active (time may have passed since last check)
+        // Check if APU or mapper IRQ is active (time may have passed since last check)
         bool apu_irq = APU::check_irq(elapsed_internal());
+        bool mapper_irq = Cartridge::check_mapper_irq(elapsed_internal());
 
         if (nmi_latch) {
             PC--;  // Point back to the thrown-away opcode
@@ -627,7 +630,7 @@ void exec()
             INT<NMI>();
             return;
         }
-        else if ((irq || apu_irq) && !P[I]) {
+        else if ((irq || apu_irq || mapper_irq) && !P[I]) {
             PC--;  // Point back to the thrown-away opcode
             INT<IRQ>();
             return;

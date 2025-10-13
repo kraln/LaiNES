@@ -22,7 +22,8 @@ class Mapper24 : public Mapper
     bool irq_mode;           // false = scanline mode, true = cycle mode
     bool irq_enable_after_ack;
     bool irq_active;         // Track whether IRQ line is currently asserted
-    int last_cpu_cycle;      // Track last CPU cycle for cycle mode timing
+    int last_cpu_cycle;      // Track last CPU cycle for both modes
+    int irq_prescaler;       // Scanline mode prescaler (341 PPU dots = ~113.67 CPU cycles)
 
     // VRC6a vs VRC6b (address line differences)
     bool is_vrc6b;
@@ -55,7 +56,7 @@ class Mapper24 : public Mapper
         return sizeof(vrc6_snapshot_t) + sizeof(prg_bank_16k) + sizeof(prg_bank_8k) +
                sizeof(chr_banks) + sizeof(irq_latch) + sizeof(irq_counter) +
                sizeof(irq_enabled) + sizeof(irq_mode) + sizeof(irq_enable_after_ack) +
-               sizeof(irq_active) + sizeof(last_cpu_cycle);
+               sizeof(irq_active) + sizeof(last_cpu_cycle) + sizeof(irq_prescaler);
     }
 
     void save_state(u8* buffer) const override {
@@ -81,6 +82,8 @@ class Mapper24 : public Mapper
         buffer[offset++] = irq_enable_after_ack ? 1 : 0;
         buffer[offset++] = irq_active ? 1 : 0;
         memcpy(buffer + offset, &last_cpu_cycle, sizeof(last_cpu_cycle));
+        offset += sizeof(last_cpu_cycle);
+        memcpy(buffer + offset, &irq_prescaler, sizeof(irq_prescaler));
     }
 
     void load_state(const u8* buffer) override {
@@ -106,6 +109,8 @@ class Mapper24 : public Mapper
         irq_enable_after_ack = buffer[offset++] != 0;
         irq_active = buffer[offset++] != 0;
         memcpy(&last_cpu_cycle, buffer + offset, sizeof(last_cpu_cycle));
+        offset += sizeof(last_cpu_cycle);
+        memcpy(&irq_prescaler, buffer + offset, sizeof(irq_prescaler));
 
         apply_prg_banks();
         apply_chr_banks();

@@ -98,25 +98,11 @@ class Mapper5 : public Mapper
         // For reset vector to work, last banks must map to end of ROM with bit 7 set
         u8 lastBank = ((prgSize / 0x2000) - 1) & 0x7F;  // Calculate last 8KB bank
 
-        fprintf(stderr, "MMC5 Init: prgSize=%u, chrSize=%u, lastBank=%u (0x%02X)\n",
-                prgSize, chrSize, lastBank, lastBank);
-        // CHR-RAM if rom[5] is 0 (header says no CHR-ROM)
-        fprintf(stderr, "MMC5 Init: CHR type: %s (%d 8KB banks in ROM header)\n",
-                rom[5] == 0 ? "CHR-RAM" : "CHR-ROM", rom[5]);
-        fprintf(stderr, "MMC5 Init: CHR pointer offset from ROM start: %ld bytes\n",
-                (long)(chr - rom));
-        fprintf(stderr, "MMC5 Init: First 16 bytes of CHR: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n",
-                chr[0], chr[1], chr[2], chr[3], chr[4], chr[5], chr[6], chr[7],
-                chr[8], chr[9], chr[10], chr[11], chr[12], chr[13], chr[14], chr[15]);
-
         prgBanks[0] = 0;  // $5113 (RAM bank - bit 7 clear)
         prgBanks[1] = 0x80 | lastBank;  // $5114 - last ROM bank (power-on state)
         prgBanks[2] = 0x80 | lastBank;  // $5115 - last ROM bank (power-on state)
         prgBanks[3] = 0x80 | lastBank;  // $5116 - last ROM bank
         prgBanks[4] = 0x80 | lastBank;  // $5117 - last ROM bank
-
-        fprintf(stderr, "MMC5 Init: prgBanks = [%02X, %02X, %02X, %02X, %02X]\n",
-                prgBanks[0], prgBanks[1], prgBanks[2], prgBanks[3], prgBanks[4]);
 
         for (int i = 0; i < 12; i++)
             chrBanks[i] = 0;

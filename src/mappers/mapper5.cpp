@@ -85,12 +85,6 @@ void Mapper5::apply_chr_banking()
     // Read current sprite size from PPU (like Mesen does)
     bool sprite8x16 = PPU::ctrl.sprSz;
 
-    fprintf(stderr, "MMC5: apply_chr_banking() - mode=%d, sprite8x16=%d\n", chrMode, sprite8x16);
-    fprintf(stderr, "  CHR banks: SPR=[%02X %02X %02X %02X %02X %02X %02X %02X] BG=[%02X %02X %02X %02X]\n",
-            chrBanks[0], chrBanks[1], chrBanks[2], chrBanks[3],
-            chrBanks[4], chrBanks[5], chrBanks[6], chrBanks[7],
-            chrBanks[8], chrBanks[9], chrBanks[10], chrBanks[11]);
-
     switch (chrMode)
     {
         case 0:  // 8KB mode - use last register written
@@ -164,16 +158,6 @@ void Mapper5::apply_chr_banking()
             break;
     }
 
-    // Debug: Print resulting mappings
-    fprintf(stderr, "  Sprite map: [");
-    for (int i = 0; i < 8; i++) {
-        fprintf(stderr, "%s$%04X", i > 0 ? ", " : "", chrMapSprite[i]);
-    }
-    fprintf(stderr, "]\n  BG map:     [");
-    for (int i = 0; i < 8; i++) {
-        fprintf(stderr, "%s$%04X", i > 0 ? ", " : "", chrMapBG[i]);
-    }
-    fprintf(stderr, "]\n");
 }
 
 u8 Mapper5::read_nametable(u16 addr)
@@ -376,7 +360,6 @@ u8 Mapper5::write(u16 addr, u8 v)
                 break;
 
             case 0x5101:  // CHR banking mode
-                fprintf(stderr, "MMC5: CHR mode changed: %d -> %d\n", chrMode, v & 0x03);
                 chrMode = v & 0x03;
                 apply_chr_banking();
                 break;
@@ -394,9 +377,6 @@ u8 Mapper5::write(u16 addr, u8 v)
                 break;
 
             case 0x5105:  // Nametable mapping
-                fprintf(stderr, "MMC5: Nametable mapping $5105 = $%02X (was $%02X)\n", v, ntMapping);
-                fprintf(stderr, "  NT0=$%d, NT1=$%d, NT2=$%d, NT3=$%d\n",
-                        v & 0x03, (v >> 2) & 0x03, (v >> 4) & 0x03, (v >> 6) & 0x03);
                 ntMapping = v;
                 // Set FOUR_SCREEN mode to allow custom mapping
                 set_mirroring(PPU::FOUR_SCREEN);
@@ -432,8 +412,6 @@ u8 Mapper5::write(u16 addr, u8 v)
                     int bankIdx = addr - 0x5120;
                     // Only apply banking if value actually changed
                     if (chrBanks[bankIdx] != v) {
-                        fprintf(stderr, "MMC5: CHR bank write $%04X = $%02X (bank %d, 'A', was $%02X)\n",
-                                addr, v, bankIdx, chrBanks[bankIdx]);
                         chrBanks[bankIdx] = v;
                         apply_chr_banking();
                     }
@@ -449,8 +427,6 @@ u8 Mapper5::write(u16 addr, u8 v)
                     int bankIdx = addr - 0x5120;
                     // Only apply banking if value actually changed
                     if (chrBanks[bankIdx] != v) {
-                        fprintf(stderr, "MMC5: CHR bank write $%04X = $%02X (bank %d, 'B', was $%02X)\n",
-                                addr, v, bankIdx, chrBanks[bankIdx]);
                         chrBanks[bankIdx] = v;
                         apply_chr_banking();
                     }
@@ -708,8 +684,6 @@ void Mapper5::ppu_read_hook(u16 addr)
                     inFrame = true;
                     irqCounter = 0;
                     irqStatus |= 0x40;  // Set in-frame flag
-                    fprintf(stderr, "MMC5 IRQ: Frame start, PPU scanline=%d, dot=%d, target=%d, counter starts at 0\n",
-                            PPU::scanline, PPU::dot, irqScanline);
                 }
                 else
                 {
@@ -721,8 +695,6 @@ void Mapper5::ppu_read_hook(u16 addr)
                 // Check if we've hit the target scanline
                 if (irqCounter == irqScanline)
                 {
-                    fprintf(stderr, "MMC5 IRQ FIRE: counter=%d, target=%d, PPU scanline=%d, dot=%d\n",
-                            irqCounter, irqScanline, PPU::scanline, PPU::dot);
                     irqStatus |= 0x80;  // Set pending flag
                     if (irqEnabled)
                         CPU::set_irq(true);
