@@ -115,6 +115,11 @@ void init()
     // Initialize graphics system:
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, scaling_mode ? "1" : "0");
+
+    // Set window class for Wayland/X11 to match .desktop file
+    SDL_SetHint("SDL_VIDEO_WAYLAND_WMCLASS", "laines");
+    SDL_SetHint("SDL_VIDEO_X11_WMCLASS", "laines");
+
     TTF_Init();
 
     for (int i = 0; i < SDL_NumJoysticks(); i++)
@@ -128,6 +133,13 @@ void init()
     window      = SDL_CreateWindow  ("LaiNES",
                                      SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                      WIDTH * last_window_size, HEIGHT * last_window_size, 0);
+
+    // Set window icon:
+    SDL_Surface* icon = IMG_Load("res/laines_icon.png");
+    if (icon) {
+        SDL_SetWindowIcon(window, icon);
+        SDL_FreeSurface(icon);
+    }
 
     renderer    = SDL_CreateRenderer(window, -1,
                                      SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
