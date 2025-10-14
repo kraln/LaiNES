@@ -122,12 +122,12 @@ template <bool write> u8 access(u16 index, u8 v, bool rmw)
             case 6:                                               // PPUADDR   ($2006).
                 if (warmupCycles <= 0) {
                     if (!latch) {
-                        // First write: set high 6 bits (bits 8-13 of address)
-                        tAddr.addr = (tAddr.addr & 0x00FF) | ((v & 0x3F) << 8);
+                        // First write: set high 6 bits (bits 8-13 of address), clear bit 14
+                        tAddr.r = (tAddr.r & 0x00FF) | ((v & 0x3F) << 8);
                     }                 // First write.
                     else {
                         // Second write: set low 8 bits (bits 0-7 of address)
-                        tAddr.addr = (tAddr.addr & 0x3F00) | v;
+                        tAddr.r = (tAddr.r & 0x3F00) | v;
                         vAddr.r = tAddr.r;
                     }     // Second write.
                     latch = !latch;
